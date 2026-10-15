@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hybrid Scoped RAG</title>
+<link rel="stylesheet" href="/static/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar" id="sidebar">
+    <header class="brand">
+      <h1>Hybrid Scoped RAG</h1>
+      <p class="tagline">BM25 + vectors, fused. Scoped to the slice you choose.</p>
+    </header>
+
+    <section class="panel">
+      <h2>Knowledge base</h2>
+      <div id="dropzone" class="dropzone" tabindex="0" role="button"
+           aria-label="Upload documents">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="upload-icon">
+          <path d="M12 16V4m0 0L7 9m5-5 5 5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+        </svg>
+        <strong>Drop files or click</strong>
+        <span class="hint">PDF · DOCX · TXT · MD · CSV · JSON</span>
+      </div>
+      <input type="file" id="file-input" multiple hidden
+             accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json" />
+
+      <label class="field">
+        <span>Tag these uploads <em class="field-hint">key=value, comma separated</em></span>
+        <input type="text" id="upload-tags" placeholder="course=CS1428, term=fall2025" />
+      </label>
+
+      <div id="upload-status" class="upload-status" role="status"></div>
+
+      <ul id="doc-list" class="doc-list"></ul>
+      <div class="doc-actions">
+        <span id="corpus-summary" class="corpus-summary">No documents yet</span>
+        <button id="clear-docs" class="link-btn danger" hidden>Clear all</button>
+      </div>
+    </section>
+
+    <section class="panel" id="scope-panel">
+      <h2>Scope</h2>
+      <p class="panel-note">
+        Filters are applied <strong>before</strong> retrieval, so the bot can only
+        see documents that match.
+      </p>
+      <div id="facet-list" class="facet-list"></div>
+      <p id="scope-empty" class="panel-note subtle">
+        Tag your documents to filter by them here.
+      </p>
+      <div class="scope-foot">
+        <span id="scope-summary" class="corpus-summary">Searching everything</span>
+        <button id="clear-scope" class="link-btn" hidden>Clear</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Persona</h2>
+      <p class="panel-note">Defines the subject area the bot will stay inside.</p>
+      <select id="preset-select" aria-label="Persona preset">
+        <option value="">— Choose a preset —</option>
+        <option value="customer_care">Customer care agent</option>
+        <option value="course_ta">Course teaching assistant</option>
+        <option value="generic">Generic document assistant</option>
+      </select>
+
+      <label class="field">
+        <span>Assistant name</span>
+        <input type="text" id="persona-name" placeholder="the Support Assistant" />
+      </label>
+      <label class="field">
+        <span>Subject area</span>
+        <textarea id="persona-topic" rows="2"
+                  placeholder="orders, returns, and warranties"></textarea>
+      </label>
+      <label class="field">
+        <span>Style guidance</span>
+        <textarea id="persona-style" rows="3"
+                  placeholder="Be warm, direct, and solution-oriented."></textarea>
+      </label>
+      <button id="save-persona" class="btn secondary">Save persona</button>
+      <div id="persona-status" class="persona-status" role="status"></div>
+    </section>
+
+    <footer class="sidebar-footer">
+      <span id="llm-badge" class="badge">checking…</span>
+      <a href="/docs" target="_blank" rel="noopener">API docs ↗</a>
+    </footer>
+  </aside>
+
+  <main class="chat">
+    <header class="chat-header">
+      <button id="sidebar-toggle" class="icon-btn" aria-label="Toggle settings panel"
+              aria-controls="sidebar" aria-expanded="true" title="Persona & documents">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 6h18M3 12h18M3 18h18"/>
+        </svg>
+      </button>
+      <div class="chat-heading">
+        <h2 id="chat-title">Assistant</h2>
+        <p id="chat-subtitle" class="chat-subtitle"></p>
+      </div>
+      <button id="reset-chat" class="link-btn">New conversation</button>
+    </header>
+
+    <div class="messages-wrap">
+      <div id="messages" class="messages" aria-live="polite" tabindex="0"></div>
+
+      <button id="scroll-top" class="scroll-jump top" hidden
+              aria-label="Scroll to top of conversation" title="Jump to top">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5l-7 7h4v7h6v-7h4z"/></svg>
+      </button>
+      <button id="scroll-bottom" class="scroll-jump bottom" hidden
+              aria-label="Scroll to latest message" title="Jump to latest">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19l7-7h-4V5H9v7H5z"/></svg>
+      </button>
+    </div>
+
+    <div id="suggestions" class="suggestions"></div>
+
+    <form id="chat-form" class="composer">
+      <textarea id="chat-input" rows="1" placeholder="Ask a question…"
+                autocomplete="off" aria-label="Your question"></textarea>
+      <button type="submit" id="send-btn" class="btn primary" aria-label="Send">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>
+      </button>
+    </form>
+  </main>
+
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

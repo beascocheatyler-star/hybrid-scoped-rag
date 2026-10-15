@@ -19,7 +19,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 267 tests, all offline
+pytest                            # 341 tests, all offline
 python run.py                     # web UI at http://localhost:8000
 ```
 
@@ -217,8 +217,16 @@ Full design, threat model, and limits: [`docs/multi-tenancy.md`](docs/multi-tena
   means a multi-customer deployment that forgets `MULTI_TENANT=1` gets no
   isolation while appearing to work. `/api/status` reports the live mode and
   startup logs a warning, but neither replaces checking.
-- **Tenant isolation is untested under concurrency.** The 52 tenancy tests
-  prove it sequentially; no test drives two tenants in parallel.
+- **Single process only.** Every lock is in-process. Under `--workers N` the
+  workers share `DATA_DIR` but not memory, and `_save` rewrites the whole
+  corpus — so concurrent uploads silently lose documents and retrieval differs
+  between workers. Startup logs an error when it detects multiple workers; it
+  is a warning, not a guard. Fixing it needs a shared transactional store.
+- **The first implementation of tenancy shipped an auth bypass**, found by
+  auditing rather than by its own 52 passing tests. Six defects are written up
+  in [`docs/multi-tenancy.md`](docs/multi-tenancy.md#what-the-audit-found) and
+  pinned by `tests/test_tenant_regressions.py`. Passing the tests you thought
+  to write is not evidence the tests covered the right things.
 
 ---
 
@@ -300,7 +308,7 @@ web/                   Vanilla JS UI, no build step
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
-tests/                 319 offline tests
+tests/                 341 offline tests
 ```
 
 ## Testing
@@ -314,7 +322,7 @@ The LLM is stubbed throughout; CI sets no API key. Frontend markdown-escaping
 and scroll behaviour are tested through Node harnesses when `node` is
 available, and skipped cleanly when it is not.
 
-The 52 tenancy tests are written adversarially. A test that only checks "tenant
+The 74 tenancy tests are written adversarially. A test that only checks "tenant
 A uploads, tenant A retrieves" passes just as happily on a system with no
 isolation at all, since a single shared corpus also returns A's document to A.
 Each one instead tries to *cross* the boundary — reading another tenant's

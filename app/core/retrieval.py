@@ -172,11 +172,17 @@ class HybridIndex:
     # --- introspection -------------------------------------------------
 
     def __len__(self) -> int:
-        return len(self._chunks)
+        # Locked for consistency with the rest of the read side. The GIL makes
+        # a torn read impossible in CPython, but reading unlocked can still
+        # observe _chunks midway through a multi-step mutation and report a
+        # count that never corresponded to a committed state.
+        with self._lock:
+            return len(self._chunks)
 
     @property
     def is_empty(self) -> bool:
-        return not self._chunks
+        with self._lock:
+            return not self._chunks
 
     @property
     def avg_length(self) -> float:

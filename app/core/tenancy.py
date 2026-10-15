@@ -166,6 +166,9 @@ class TenantRegistry:
         self._tenants: Dict[str, Tenant] = {}
         self._keys: Dict[str, str] = {}
         self._contexts: Dict[str, TenantContext] = {}
+        # One construction lock per tenant, so a slow cold start blocks only
+        # that tenant's own callers. See context_for.
+        self._build_locks: Dict[str, threading.Lock] = {}
 
     # --- provisioning ---------------------------------------------------
 
@@ -175,6 +178,13 @@ class TenantRegistry:
         The key is held in memory only; persisting credentials is the
         deployment's job, not this module's. See ``docs/multi-tenancy.md`` for
         why this is a deliberate boundary rather than an omission.
+
+        Re-registering an id that already exists is an error rather than an
+        overwrite. Two config entries differing only in case ("ACME" and
+        "acme") normalise to one id, and silently merging them would hand one
+        customer the other's entire corpus with no error, no warning, and no
+        way for the operator to notice. An id collision is always a mistake,
+        so it is reported as one.
         """
         clean_id = validate_tenant_id(tenant_id)
 
@@ -183,10 +193,19 @@ class TenantRegistry:
         key = api_key.strip()
 
         with self._lock:
-            owner = self._keys.get(key)
-            if owner is not None and owner != clean_id:
-                # Silently rebinding a live key would hand one tenant's traffic
-                # to another — the exact failure this class exists to prevent.
+            existing = self._tenants.get(clean_id)
+            if existing is not None:
+                raise InvalidTenantError(
+                    "Tenant id {!r} is already registered (as {!r}). Ids are "
+                    "compared case-insensitively, so {!r} and {!r} are the "
+                    "same tenant.".format(
+                        clean_id, existing.name, tenant_id, existing.tenant_id
+                    )
+                )
+
+            if self._find_key_owner(key) is not None:
+                # Rebinding a live key would hand one tenant's traffic to
+                # another — the exact failure this class exists to prevent.
                 raise InvalidTenantError(
                     "That API key is already bound to a different tenant."
                 )
@@ -195,6 +214,60 @@ class TenantRegistry:
             self._tenants[clean_id] = tenant
             self._keys[key] = clean_id
             return tenant
+
+    def register_keyless(self, tenant_id: str, name: str) -> Tenant:
+        """Provision a tenant that **no credential can reach**.
+
+        This exists for the single-tenant default. Giving that tenant a real
+        key — even a sentinel string like ``__single_tenant__`` — makes it
+        reachable by anyone who reads the source, which is an authentication
+        bypass in multi-tenant mode. The only safe sentinel is no entry in the
+        key table at all, so ``resolve`` cannot match it however it is called.
+
+        The returned tenant is reachable only by holding this object, which is
+        what ``current_tenant`` does when multi-tenancy is off.
+        """
+        clean_id = validate_tenant_id(tenant_id)
+        with self._lock:
+            existing = self._tenants.get(clean_id)
+            if existing is not None:
+                return existing
+            tenant = Tenant(tenant_id=clean_id, name=name or clean_id)
+            self._tenants[clean_id] = tenant
+            return tenant
+
+    def _find_key_owner(self, presented: str) -> Optional[str]:
+        """Constant-time lookup of the tenant owning ``presented``.
+
+        Caller must hold ``self._lock``. Compared with ``hmac.compare_digest``
+        rather than a dict lookup or ``==``: both short-circuit on the first
+        differing byte, so response time correlates with how much of a guessed
+        prefix is correct, which leaks the key a byte at a time. Every
+        candidate is compared and the loop never exits early.
+
+        The honest limit of that claim: ``compare_digest`` is constant-time
+        only for equal-length inputs and returns early otherwise, so this still
+        leaks the *length* of valid keys. Closing that needs hashing every
+        candidate to a fixed width, which is the same change a large deployment
+        wants anyway for O(1) lookup. Key length is far less useful to an
+        attacker than key content, so the remaining leak is a known gap rather
+        than an oversight.
+
+        Keys are compared as UTF-8 bytes. ``compare_digest`` rejects ``str``
+        containing non-ASCII with a ``TypeError``, which would both crash the
+        request and abandon the constant-time property partway through the
+        loop; encoding first makes any byte sequence comparable.
+        """
+        try:
+            probe = presented.encode("utf-8")
+        except (UnicodeEncodeError, AttributeError):
+            return None
+
+        matched: Optional[str] = None
+        for known_key, tenant_id in self._keys.items():
+            if hmac.compare_digest(known_key.encode("utf-8"), probe):
+                matched = tenant_id
+        return matched
 
     def list_tenants(self):
         with self._lock:
@@ -214,27 +287,25 @@ class TenantRegistry:
 
         presented = api_key.strip()
         with self._lock:
-            # Compared with hmac.compare_digest rather than a dict lookup or
-            # ``==``. Both of those short-circuit on the first differing byte,
-            # so response time correlates with how much of a guessed prefix is
-            # correct, which leaks the key a byte at a time. Every candidate is
-            # compared and no loop exits early, so the work done is a function
-            # of the number of tenants, not of how close the guess was.
-            #
-            # The cost is O(tenants) per request. At the scale this targets that
-            # is nothing; a deployment with many thousands of tenants should
+            # See _find_key_owner for why this is not a dict lookup. The cost
+            # is O(tenants) per request; at the scale this targets that is
+            # nothing, and a deployment with many thousands of tenants should
             # move to hashed-key lookup, which restores O(1) without
-            # reintroducing the leak.
-            matched: Optional[str] = None
-            for known_key, tenant_id in self._keys.items():
-                if hmac.compare_digest(known_key, presented):
-                    matched = tenant_id
-
+            # reintroducing the timing leak.
+            matched = self._find_key_owner(presented)
             if matched is None:
                 # Deliberately uniform: distinguishing "no such key" from "key
                 # for a deleted tenant" would confirm which keys once existed.
                 raise UnknownTenantError("That API key is not recognised.")
-            return self._tenants[matched]
+
+            tenant = self._tenants.get(matched)
+            if tenant is None:
+                # A key whose tenant has gone is a broken registry, not a
+                # client error. Report it as the same 401 rather than letting a
+                # KeyError become a 500 that distinguishes this case.
+                logger.error("Key maps to unknown tenant %r; registry is inconsistent.", matched)
+                raise UnknownTenantError("That API key is not recognised.")
+            return tenant
 
     def directory_for(self, tenant_id: str) -> Path:
         """The isolated data directory for a tenant.
@@ -255,13 +326,53 @@ class TenantRegistry:
         return path
 
     def context_for(self, tenant: Tenant) -> TenantContext:
-        """The tenant's store and persona, building them on first use."""
+        """The tenant's store and persona, building them on first use.
+
+        Construction happens under a lock *for that tenant only*, not under the
+        registry lock. Building a store reads the tenant's corpus from disk and
+        may re-embed every chunk, which with the sentence-transformers backend
+        takes seconds to minutes on a large corpus. Holding the global lock
+        across that would make one tenant's cold start block every other
+        tenant's first request — and because the endpoints are sync `def`,
+        they occupy threadpool workers while blocked, so a cold-start herd
+        could exhaust the pool and stall the whole service, /api/status
+        included.
+
+        The double check around the per-tenant lock is what keeps this correct:
+        two threads may both miss the first check, but only one builds, and the
+        second sees the finished context rather than building a duplicate store
+        over the same directory.
+        """
+        tenant_id = tenant.tenant_id
+
+        existing = self._contexts.get(tenant_id)
+        if existing is not None:
+            return existing
+
         with self._lock:
-            existing = self._contexts.get(tenant.tenant_id)
+            # A Tenant object is not itself authority to open a corpus. Without
+            # this, any caller holding a hand-made or stale Tenant could have a
+            # store built and cached for an id this registry never issued.
+            if self._tenants.get(tenant_id) is not tenant:
+                raise UnknownTenantError(
+                    "Tenant {!r} is not registered with this registry.".format(
+                        tenant_id
+                    )
+                )
+
+            build_lock = self._build_locks.get(tenant_id)
+            if build_lock is None:
+                build_lock = threading.Lock()
+                self._build_locks[tenant_id] = build_lock
+
+        with build_lock:
+            # Re-check: another thread may have finished building while this
+            # one waited for the lock.
+            existing = self._contexts.get(tenant_id)
             if existing is not None:
                 return existing
 
-            directory = self.directory_for(tenant.tenant_id)
+            directory = self.directory_for(tenant_id)
             directory.mkdir(parents=True, exist_ok=True)
 
             store = DocumentStore(
@@ -274,8 +385,9 @@ class TenantRegistry:
                 store=store,
                 personas=PersonaStore(directory),
             )
-            self._contexts[tenant.tenant_id] = context
-            logger.info("Initialised tenant %s at %s", tenant.tenant_id, directory)
+            with self._lock:
+                self._contexts[tenant_id] = context
+            logger.info("Initialised tenant %s at %s", tenant_id, directory)
             return context
 
 

@@ -7,8 +7,12 @@ survives a restart.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
+import os
+import threading
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -118,6 +122,7 @@ class PersonaStore:
 
     def __init__(self, data_dir: Path):
         self._path = Path(data_dir) / "persona.json"
+        self._lock = threading.RLock()
         self._persona = self._load()
 
     def _load(self) -> Persona:
@@ -140,11 +145,72 @@ class PersonaStore:
         return self._persona
 
     def set(self, persona: Persona) -> Persona:
-        self._persona = persona
-        self._path.write_text(
-            json.dumps(persona.to_dict(), indent=2, ensure_ascii=False), "utf-8"
+        """Persist a persona, then adopt it.
+
+        Written to a temp file and renamed, mirroring ``DocumentStore._save``.
+        The previous version called ``write_text``, which opens with "w" and so
+        **truncates before writing**: two concurrent writes to one tenant could
+        interleave into invalid JSON, and a crash mid-write left a partial
+        file. Either way ``_load`` would fail on the next boot and silently
+        reset that tenant to the default persona, losing its name, topic, and
+        style with only a warning in the log.
+
+        The in-memory persona is adopted *after* the write succeeds. Doing it
+        first meant a failed write (disk full, permissions) left the running
+        bot using a persona that was never persisted, which would then vanish
+        at the next restart.
+        """
+        payload = json.dumps(persona.to_dict(), indent=2, ensure_ascii=False)
+
+        # Unique per writer: a fixed temp name lets two processes sharing a
+        # DATA_DIR rename each other's partial file into place, and two threads
+        # here would otherwise write the same temp path concurrently.
+        tmp = self._path.with_name(
+            "persona.{}.{}.tmp".format(os.getpid(), uuid.uuid4().hex[:8])
         )
-        return persona
+
+        # Written *outside* the lock. fsync can take hundreds of milliseconds on
+        # a loaded disk, and these endpoints are sync `def`, so they occupy a
+        # threadpool worker while blocked. Serialising the fsync would let a
+        # burst of persona updates exhaust the pool and stall unrelated
+        # requests. The temp name is unique per call, so concurrent writers
+        # cannot interfere with each other here.
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except OSError:
+            logger.exception("Failed to write the persona to %s", tmp)
+            self._discard(tmp)
+            raise
+
+        # Only the rename and the in-memory adoption need to be atomic with
+        # respect to each other, and both are fast.
+        with self._lock:
+            try:
+                tmp.replace(self._path)  # atomic within a filesystem
+            except OSError:
+                logger.exception("Failed to persist the persona to %s", self._path)
+                self._discard(tmp)
+                raise
+
+            self._persona = persona
+            return persona
+
+    @staticmethod
+    def _discard(tmp: Path) -> None:
+        """Remove a temp file without masking the error that caused the cleanup.
+
+        A bare ``tmp.unlink()`` inside an ``except`` block can itself raise —
+        an unwritable directory is a plausible cause of the original failure —
+        and that second exception would replace the first, hiding what actually
+        went wrong.
+        """
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Could not remove temp file %s", tmp, exc_info=True)
 
     def apply_preset(self, key: str) -> Persona:
         if key not in PRESETS:
@@ -153,4 +219,10 @@ class PersonaStore:
                     key, ", ".join(sorted(PRESETS))
                 )
             )
-        return self.set(PRESETS[key])
+        # Deep-copied, not stored by reference. PRESETS holds mutable module-
+        # level Persona objects with mutable list fields; handing the same
+        # object to two PersonaStores would alias them, so an in-place edit by
+        # one tenant would appear in another's persona and in its LLM system
+        # prompt — and would permanently pollute PRESETS for every tenant that
+        # applied the preset afterwards.
+        return self.set(copy.deepcopy(PRESETS[key]))

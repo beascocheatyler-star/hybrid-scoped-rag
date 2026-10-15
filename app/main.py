@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -74,12 +75,48 @@ registry = TenantRegistry(
 # Serving both modes through one registry means the endpoints below have no
 # tenancy branching in them at all: there is exactly one way to reach a store,
 # so there is no unguarded path to forget about.
-DEFAULT_TENANT = registry.register(
-    settings.default_tenant_id, "Default", "__single_tenant__"
-)
+#
+# Registered *without* a key. An earlier version gave it the sentinel
+# "__single_tenant__", which was an authentication bypass: the string is public
+# in the source, so in multi-tenant mode anyone could send it as X-API-Key and
+# get full read/write/delete on this tenant. A keyless tenant has no entry in
+# the key table, so resolve() cannot reach it however it is called.
+#
+# Misconfiguration here is fatal by design — a service that cannot establish
+# who its tenants are must not start. But this runs at import, before the
+# exception handlers below are registered, so a raw exception would reach the
+# operator as a bare traceback. Each failure is re-raised with a message that
+# names the setting to fix.
+try:
+    DEFAULT_TENANT = registry.register_keyless(settings.default_tenant_id, "Default")
+except InvalidTenantError as exc:
+    raise RuntimeError(
+        "DEFAULT_TENANT_ID={!r} is not a valid tenant id: {} "
+        "Use 1-63 characters of lowercase letters, digits, hyphen, or "
+        "underscore.".format(settings.default_tenant_id, exc)
+    ) from exc
 
-for _tid, _name, _key in parse_tenant_config(settings.tenant_config):
-    registry.register(_tid, _name, _key)
+try:
+    _tenant_entries = parse_tenant_config(settings.tenant_config)
+except InvalidTenantError as exc:
+    raise RuntimeError("TENANTS is malformed: {}".format(exc)) from exc
+
+for _tid, _name, _key in _tenant_entries:
+    if _tid == DEFAULT_TENANT.tenant_id:
+        # Otherwise a configured tenant would collide with the default and the
+        # two would share one corpus. register() would also catch this, but
+        # naming DEFAULT_TENANT_ID points at the actual cause.
+        raise RuntimeError(
+            "Tenant id {!r} in TENANTS collides with DEFAULT_TENANT_ID={!r}. "
+            "Ids are compared case-insensitively. Rename the tenant or set "
+            "DEFAULT_TENANT_ID to something else.".format(
+                _tid, settings.default_tenant_id
+            )
+        )
+    try:
+        registry.register(_tid, _name, _key)
+    except InvalidTenantError as exc:
+        raise RuntimeError("TENANTS entry {!r} rejected: {}".format(_tid, exc)) from exc
 
 _configured_tenants = [
     t for t in registry.list_tenants() if t.tenant_id != DEFAULT_TENANT.tenant_id
@@ -99,6 +136,46 @@ elif settings.multi_tenant:
     )
 
 engine = ChatEngine(settings=settings)
+
+
+def _warn_if_multiprocess() -> None:
+    """Warn loudly when the process looks like one of several sharing DATA_DIR.
+
+    Every lock in this project is in-process. Run under ``--workers N`` each
+    worker gets its own registry, store, and index while sharing one DATA_DIR,
+    and ``DocumentStore._save`` rewrites the *whole* corpus from that worker's
+    in-memory state. Two workers ingesting concurrently therefore lose data:
+    whichever save lands second wins completely, and the document the other
+    worker just acknowledged with a 200 is gone from disk — while that worker
+    keeps serving it from memory until restart. Retrieval also splits, since
+    each worker's index reflects only its own uploads.
+
+    The temp-file-per-PID trick in ``store.py`` makes each individual write
+    atomic, which prevents a *corrupt* file but not a *lost update*.
+
+    This cannot be fixed with a lock; it needs a shared store (SQLite with
+    proper transactions, or a real database). Until then the honest thing is to
+    make the unsafe configuration visible rather than let it silently drop
+    documents.
+    """
+    workers = os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS")
+    try:
+        count = int(workers) if workers else 1
+    except ValueError:
+        count = 1
+
+    if count > 1:
+        logger.error(
+            "Detected %s worker processes sharing DATA_DIR=%s. Every lock here "
+            "is in-process, so concurrent uploads WILL silently lose documents "
+            "and retrieval will differ between workers. Run with a single "
+            "worker until the corpus is backed by a shared store.",
+            count,
+            settings.data_dir,
+        )
+
+
+_warn_if_multiprocess()
 
 
 def current_tenant(

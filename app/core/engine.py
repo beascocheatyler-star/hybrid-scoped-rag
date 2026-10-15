@@ -199,8 +199,12 @@ def build_context_block(hits: List[SearchHit]) -> str:
 class ChatEngine:
     """Orchestrates hybrid retrieval, the scope gate, and grounded generation."""
 
-    def __init__(self, settings: Settings, store: DocumentStore):
+    def __init__(self, settings: Settings, store: Optional[DocumentStore] = None):
         self.settings = settings
+        # The default store, used when ``answer`` is not given one. Kept for
+        # single-tenant callers and existing tests; multi-tenant callers pass
+        # the caller's store per request instead, because an engine that holds
+        # one tenant's corpus cannot safely serve another's.
         self.store = store
         self._client = None
 
@@ -238,7 +242,19 @@ class ChatEngine:
         history: Optional[List[Dict[str, str]]] = None,
         doc_ids: Optional[List[str]] = None,
         scope: Optional[ScopeFilter] = None,
+        store: Optional[DocumentStore] = None,
     ) -> Answer:
+        # Resolved once, here, and used for every subsequent lookup in this
+        # call. Reading self.store in some places and the parameter in others
+        # is how a cross-tenant leak gets written by accident, so the rest of
+        # this method refers only to the local name.
+        store = store or self.store
+        if store is None:
+            raise ValueError(
+                "ChatEngine.answer needs a store, either passed per call or "
+                "set on the engine."
+            )
+
         question = (question or "").strip()
         if not question:
             return Answer(
@@ -251,16 +267,16 @@ class ChatEngine:
         if scope is None and doc_ids:
             scope = ScopeFilter.parse(doc_ids=doc_ids)
 
-        matched = self.store.count_matching(scope)
+        matched = store.count_matching(scope)
 
-        hits = self.store.index.search(
+        hits = store.index.search(
             question, top_k=self.settings.top_k, scope=scope
         )
         result = classify(
             question=question,
             hits=hits,
             relevance_floor=self.settings.relevance_floor,
-            corpus_empty=self.store.is_empty,
+            corpus_empty=store.is_empty,
             scope=scope,
             scope_matched_documents=matched,
             dense_rescue_floor=self.settings.dense_rescue_floor,
@@ -273,7 +289,7 @@ class ChatEngine:
                     result,
                     assistant_name=persona.name,
                     topic=persona.topic,
-                    document_names=[d.name for d in self.store.list_documents()],
+                    document_names=[d.name for d in store.list_documents()],
                 ),
                 in_scope=False,
                 decision=result.decision,
@@ -285,7 +301,7 @@ class ChatEngine:
             )
 
         # Layer 2: grounded generation.
-        return self._generate(question, persona, result, history or [], matched)
+        return self._generate(question, persona, result, history or [], matched, store)
 
     def _generate(
         self,
@@ -294,12 +310,16 @@ class ChatEngine:
         scope: ScopeResult,
         history: List[Dict[str, str]],
         matched: int,
+        store: DocumentStore,
     ) -> Answer:
+        # Passed in rather than read from self: the document names below go
+        # into the system prompt, so reading the wrong store here would name
+        # another tenant's files to the model and, from there, to the user.
         client = self._get_client()
 
         system_prompt = build_system_prompt(
             persona=persona,
-            document_names=[d.name for d in self.store.list_documents()],
+            document_names=[d.name for d in store.list_documents()],
             strict_scope=self.settings.strict_scope,
             scope_description=scope.scope_description,
         )

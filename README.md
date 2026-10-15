@@ -154,6 +154,42 @@ raising the floor must never make the bot answer *more* questions.
 
 ---
 
+## Multi-tenancy
+
+One deployment can serve several customers, each with a corpus the others
+cannot read. Off by default; existing single-corpus installs are unaffected.
+
+```bash
+MULTI_TENANT=1 TENANTS="acme:Acme University:acme-key-xxx,globex:Globex:globex-key-yyy" \
+  python run.py
+
+curl -H "X-API-Key: acme-key-xxx" localhost:8000/api/documents
+```
+
+**Tenant scope is not the same thing as the topic scope above, and is not built
+the same way.** Topic scope asks "is this question on-topic?" — a tuned
+judgement the user picks per request and may widen freely. Tenant scope asks
+"is this data yours?" — absolute, derived from the credential, and not
+influenced by any request field. The first being wrong costs an unhelpful
+answer; the second being wrong is a data breach.
+
+So tenancy is not another `ScopeFilter`. Each tenant gets its own
+`DocumentStore` over its own directory, and cross-tenant chunks are not
+filtered out at query time — they are **not in the index being searched**. A
+filtering bug can leak; an absent document cannot.
+
+Same question, two tenants:
+
+```
+Question: What happens if I miss an exam?
+  acme (owns syllabus)     7 chunks | top hits: ['cs1428_syllabus.md']
+  globex (owns returns)    5 chunks | top hits: ['returns_and_shipping.md']
+```
+
+Full design, threat model, and limits: [`docs/multi-tenancy.md`](docs/multi-tenancy.md).
+
+---
+
 ## Honest limitations
 
 - **The default embedder is not semantic.** `HashingEmbedder` scores character
@@ -174,6 +210,15 @@ raising the floor must never make the bot answer *more* questions.
   not change.
 - **The index is in-memory.** Single-process. Horizontal scaling would need a
   shared vector store.
+- **Tenant credentials are env-var plaintext, held in memory.** Fine for a demo
+  or a small deployment; a real one needs keys hashed at rest and revocable
+  without a restart. `TenantRegistry` is the seam.
+- **Multi-tenancy defaults to off**, which keeps existing installs working but
+  means a multi-customer deployment that forgets `MULTI_TENANT=1` gets no
+  isolation while appearing to work. `/api/status` reports the live mode and
+  startup logs a warning, but neither replaces checking.
+- **Tenant isolation is untested under concurrency.** The 52 tenancy tests
+  prove it sequentially; no test drives two tenants in parallel.
 
 ---
 
@@ -188,7 +233,12 @@ raising the floor must never make the bot answer *more* questions.
 | `GET` | `/api/facets` | Available metadata keys and values |
 | `POST` | `/api/search` | **Retrieval only — no LLM, no key** |
 | `POST` | `/api/chat` | Ask a scoped question |
-| `GET` | `/api/status` | Config, corpus stats, facets |
+| `GET` | `/api/status` | Config, corpus stats, facets, live tenancy mode |
+
+In multi-tenant mode every endpoint above requires `X-API-Key` and operates
+only on that tenant's corpus. `/api/status` included: document counts describe
+a specific corpus, so serving them unauthenticated would disclose one tenant's
+holdings to anyone who asked.
 
 `/api/search` exists so retrieval can be graded on its own terms, exposing the
 per-retriever ranks RRF fused and the decision the gate would reach:
@@ -220,6 +270,9 @@ All optional; every value has a working default.
 | `TOP_K` | `6` | Passages per answer |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Characters |
 | `DATA_DIR` | `./data` | Corpus location |
+| `MULTI_TENANT` | `0` | `1` isolates tenants and requires `X-API-Key` |
+| `TENANTS` | — | `id:name:key`, comma- or newline-separated |
+| `DEFAULT_TENANT_ID` | `default` | Tenant used when multi-tenancy is off |
 
 Setting `LEXICAL_WEIGHT=0` or `DENSE_WEIGHT=0` isolates either retriever, which
 is how `measure_hybrid.py` attributes the contribution of each.
@@ -242,11 +295,12 @@ app/
     chunking.py        Boundary-aware splitting
     extract.py         PDF / DOCX / CSV / JSON / MD / TXT
     persona.py         Who the bot is and what it covers
+    tenancy.py         Per-tenant stores, credential resolution, isolation
 web/                   Vanilla JS UI, no build step
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
-tests/                 267 offline tests
+tests/                 319 offline tests
 ```
 
 ## Testing
@@ -259,6 +313,14 @@ pytest -q --tb=short
 The LLM is stubbed throughout; CI sets no API key. Frontend markdown-escaping
 and scroll behaviour are tested through Node harnesses when `node` is
 available, and skipped cleanly when it is not.
+
+The 52 tenancy tests are written adversarially. A test that only checks "tenant
+A uploads, tenant A retrieves" passes just as happily on a system with no
+isolation at all, since a single shared corpus also returns A's document to A.
+Each one instead tries to *cross* the boundary — reading another tenant's
+document by its real id, deleting it, retrieving its text, seeing its metadata
+tags, or having its filenames surface in a refusal message — and asserts that
+it fails.
 
 ## Credit
 

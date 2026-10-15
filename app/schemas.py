@@ -179,6 +179,13 @@ class StatusResponse(BaseModel):
     retrieval: RetrievalInfo
     facets: Dict[str, Dict[str, int]] = Field(default_factory=dict)
 
+    # Reported so an operator can confirm which mode is actually live rather
+    # than inferring it. A deployment that believes it is isolating tenants and
+    # is not should be able to find that out by reading one field.
+    multi_tenant: bool = False
+    tenant_id: str = ""
+    tenant_name: str = ""
+
 
 class ErrorResponse(BaseModel):
     detail: str

@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -19,6 +19,14 @@ from app.core.guard import classify
 from app.core.metadata import InvalidFilterError, ScopeFilter
 from app.core.persona import PRESETS, Persona, PersonaStore
 from app.core.store import DocumentStore, DuplicateDocumentError
+from app.core.tenancy import (
+    InvalidTenantError,
+    Tenant,
+    TenantContext,
+    TenantRegistry,
+    UnknownTenantError,
+    parse_tenant_config,
+)
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -44,17 +52,85 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 settings = get_settings()
 embedder = get_embedder(settings.embedding_backend, settings.embedding_dimensions)
-store = DocumentStore(
+
+# One registry owns every tenant's store and persona. The embedder is shared
+# deliberately: it is stateless and read-only (a hashing function or a frozen
+# model), so sharing it leaks nothing between tenants while avoiding a
+# per-tenant copy of a model that can be hundreds of megabytes. Everything that
+# holds *data* — corpus, index, persona — is per tenant.
+registry = TenantRegistry(
     data_dir=settings.data_dir,
-    chunk_size=settings.chunk_size,
-    overlap=settings.chunk_overlap,
     embedder=embedder,
-    rrf_k=settings.rrf_k,
-    lexical_weight=settings.lexical_weight,
-    dense_weight=settings.dense_weight,
+    store_options={
+        "chunk_size": settings.chunk_size,
+        "overlap": settings.chunk_overlap,
+        "rrf_k": settings.rrf_k,
+        "lexical_weight": settings.lexical_weight,
+        "dense_weight": settings.dense_weight,
+    },
 )
-personas = PersonaStore(settings.data_dir)
-engine = ChatEngine(settings=settings, store=store)
+
+# In single-tenant mode this is the only tenant, and it needs no credential.
+# Serving both modes through one registry means the endpoints below have no
+# tenancy branching in them at all: there is exactly one way to reach a store,
+# so there is no unguarded path to forget about.
+DEFAULT_TENANT = registry.register(
+    settings.default_tenant_id, "Default", "__single_tenant__"
+)
+
+for _tid, _name, _key in parse_tenant_config(settings.tenant_config):
+    registry.register(_tid, _name, _key)
+
+_configured_tenants = [
+    t for t in registry.list_tenants() if t.tenant_id != DEFAULT_TENANT.tenant_id
+]
+if _configured_tenants and not settings.multi_tenant:
+    logger.warning(
+        "%d tenant(s) are configured but MULTI_TENANT is not enabled, so every "
+        "request will be served the single default corpus and the tenant "
+        "credentials will be ignored. Set MULTI_TENANT=1 to enforce isolation.",
+        len(_configured_tenants),
+    )
+elif settings.multi_tenant:
+    logger.info(
+        "Multi-tenant mode: %d tenant(s) registered; each request must carry a "
+        "valid X-API-Key.",
+        len(_configured_tenants),
+    )
+
+engine = ChatEngine(settings=settings)
+
+
+def current_tenant(
+    x_api_key: Optional[str] = Header(
+        default=None,
+        alias="X-API-Key",
+        description=(
+            "Tenant credential. Required when the service runs in multi-tenant "
+            "mode; ignored otherwise."
+        ),
+    ),
+) -> TenantContext:
+    """Resolve the caller's tenant from its credential.
+
+    This is the only way an endpoint obtains a store, which is what makes the
+    isolation structural rather than a convention: an endpoint cannot reach a
+    corpus without first going through authentication, because there is no
+    module-level store left to reach for.
+
+    Note that the tenant is never read from the request body or path. A caller
+    may say what it wants done, never whose data to do it to.
+    """
+    if not settings.multi_tenant:
+        return registry.context_for(DEFAULT_TENANT)
+
+    try:
+        tenant = registry.resolve(x_api_key)
+    except UnknownTenantError as exc:
+        # 401, not 403: the credential is missing or unrecognised, so the
+        # correct remedy is to authenticate, not to request permission.
+        raise HTTPException(status_code=401, detail=str(exc))
+    return registry.context_for(tenant)
 
 app = FastAPI(
     title="Hybrid Scoped RAG",
@@ -80,6 +156,11 @@ async def _invalid_filter_handler(_request, exc: InvalidFilterError):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+@app.exception_handler(InvalidTenantError)
+async def _invalid_tenant_handler(_request, exc: InvalidTenantError):
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 def _parse_scope(
     raw_scope, doc_ids: Optional[List[str]]
 ) -> Optional[ScopeFilter]:
@@ -98,8 +179,14 @@ def _parse_scope(
 
 
 @app.get("/api/status", response_model=StatusResponse, tags=["status"])
-def status() -> StatusResponse:
-    """Health and configuration summary. Safe to call without an API key."""
+def status(ctx: TenantContext = Depends(current_tenant)) -> StatusResponse:
+    """Health and configuration summary.
+
+    In multi-tenant mode this still requires a key: document and chunk counts
+    describe a specific corpus, and serving them unauthenticated would disclose
+    one tenant's holdings to anyone who asked.
+    """
+    store, personas = ctx.store, ctx.personas
     persona = personas.current
     return StatusResponse(
         status="ok",
@@ -121,6 +208,9 @@ def status() -> StatusResponse:
             hybrid_enabled=settings.hybrid_enabled,
         ),
         facets=store.facets(),
+        multi_tenant=settings.multi_tenant,
+        tenant_id=ctx.tenant_id,
+        tenant_name=ctx.tenant.display_name,
     )
 
 
@@ -139,6 +229,7 @@ async def upload_documents(
             '{"course": "CS1428", "term": "fall2025"}.'
         ),
     ),
+    ctx: TenantContext = Depends(current_tenant),
 ) -> UploadResponse:
     """Ingest one or more documents into the knowledge base.
 
@@ -148,6 +239,7 @@ async def upload_documents(
     ``metadata`` arrives as a JSON string because this is a multipart form
     upload, which has no native nested-object encoding.
     """
+    store = ctx.store
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
 
@@ -222,9 +314,11 @@ async def upload_documents(
 
 
 @app.get("/api/documents", response_model=List[DocumentModel], tags=["documents"])
-def list_documents() -> List[DocumentModel]:
-    """List everything currently in the knowledge base."""
-    return [DocumentModel(**d.to_dict()) for d in store.list_documents()]
+def list_documents(
+    ctx: TenantContext = Depends(current_tenant),
+) -> List[DocumentModel]:
+    """List everything currently in the caller's knowledge base."""
+    return [DocumentModel(**d.to_dict()) for d in ctx.store.list_documents()]
 
 
 @app.put(
@@ -232,10 +326,21 @@ def list_documents() -> List[DocumentModel]:
     response_model=DocumentModel,
     tags=["documents"],
 )
-def set_document_metadata(doc_id: str, body: MetadataRequest) -> DocumentModel:
-    """Replace a document's metadata tags, re-scoping it without re-uploading."""
+def set_document_metadata(
+    doc_id: str,
+    body: MetadataRequest,
+    ctx: TenantContext = Depends(current_tenant),
+) -> DocumentModel:
+    """Replace a document's metadata tags, re-scoping it without re-uploading.
+
+    ``doc_id`` is caller-supplied, so this is where a horizontal-privilege bug
+    would live. It cannot: the lookup runs against the caller's own store, so
+    another tenant's id is simply absent and returns 404 — which is also the
+    right answer to disclose, since confirming the id exists elsewhere would
+    leak that the document exists at all.
+    """
     try:
-        doc = store.set_metadata(doc_id, body.metadata)
+        doc = ctx.store.set_metadata(doc_id, body.metadata)
     except InvalidFilterError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if doc is None:
@@ -246,18 +351,19 @@ def set_document_metadata(doc_id: str, body: MetadataRequest) -> DocumentModel:
 
 
 @app.get("/api/facets", response_model=FacetsResponse, tags=["documents"])
-def facets() -> FacetsResponse:
-    """Every metadata key and value in the corpus, with document counts.
+def facets(ctx: TenantContext = Depends(current_tenant)) -> FacetsResponse:
+    """Every metadata key and value in the caller's corpus, with doc counts.
 
     The UI uses this to offer real scope choices rather than making the user
     guess at tag names.
     """
-    return FacetsResponse(facets=store.facets())
+    return FacetsResponse(facets=ctx.store.facets())
 
 
 @app.delete("/api/documents/{doc_id}", tags=["documents"])
-def delete_document(doc_id: str):
-    """Remove a single document and de-index its chunks."""
+def delete_document(doc_id: str, ctx: TenantContext = Depends(current_tenant)):
+    """Remove one of the caller's own documents and de-index its chunks."""
+    store = ctx.store
     if not store.delete(doc_id):
         raise HTTPException(
             status_code=404, detail="No document with id '{}'.".format(doc_id)
@@ -270,9 +376,9 @@ def delete_document(doc_id: str):
 
 
 @app.delete("/api/documents", tags=["documents"])
-def clear_documents():
-    """Wipe the entire knowledge base."""
-    store.clear()
+def clear_documents(ctx: TenantContext = Depends(current_tenant)):
+    """Wipe the caller's knowledge base. Other tenants are untouched."""
+    ctx.store.clear()
     return {"cleared": True, "total_documents": 0, "total_chunks": 0}
 
 
@@ -287,7 +393,9 @@ def supported_types():
 
 
 @app.post("/api/search", response_model=SearchResponse, tags=["retrieval"])
-def search(body: SearchRequest) -> SearchResponse:
+def search(
+    body: SearchRequest, ctx: TenantContext = Depends(current_tenant)
+) -> SearchResponse:
     """Run hybrid retrieval and return the ranked passages. No LLM call.
 
     This endpoint exists so the retrieval system can be inspected and graded on
@@ -295,6 +403,7 @@ def search(body: SearchRequest) -> SearchResponse:
     per-retriever ranks that RRF fused, and the decision the scope gate would
     have reached.
     """
+    store = ctx.store
     scope = _parse_scope(body.scope, body.doc_ids)
     matched = store.count_matching(scope)
 
@@ -342,22 +451,30 @@ def search(body: SearchRequest) -> SearchResponse:
 
 
 @app.get("/api/persona", response_model=PersonaModel, tags=["persona"])
-def get_persona() -> PersonaModel:
-    return PersonaModel(**personas.current.to_dict())
+def get_persona(ctx: TenantContext = Depends(current_tenant)) -> PersonaModel:
+    return PersonaModel(**ctx.personas.current.to_dict())
 
 
 @app.put("/api/persona", response_model=PersonaModel, tags=["persona"])
-def set_persona(body: PersonaModel) -> PersonaModel:
-    """Define who the bot is and what subject it is allowed to cover."""
-    saved = personas.set(Persona.from_dict(body.model_dump()))
+def set_persona(
+    body: PersonaModel, ctx: TenantContext = Depends(current_tenant)
+) -> PersonaModel:
+    """Define who the bot is and what subject it is allowed to cover.
+
+    Per tenant: each customer brands and scopes its own assistant, and one
+    tenant's persona change must not alter another's bot.
+    """
+    saved = ctx.personas.set(Persona.from_dict(body.model_dump()))
     return PersonaModel(**saved.to_dict())
 
 
 @app.post("/api/persona/preset", response_model=PersonaModel, tags=["persona"])
-def apply_preset(body: PresetRequest) -> PersonaModel:
+def apply_preset(
+    body: PresetRequest, ctx: TenantContext = Depends(current_tenant)
+) -> PersonaModel:
     """Switch to a built-in persona (customer_care, course_ta, generic)."""
     try:
-        saved = personas.apply_preset(body.preset)
+        saved = ctx.personas.apply_preset(body.preset)
     except KeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return PersonaModel(**saved.to_dict())
@@ -374,14 +491,22 @@ def list_presets():
 
 
 @app.post("/api/chat", response_model=ChatResponse, tags=["chat"])
-def chat(body: ChatRequest) -> ChatResponse:
-    """Ask a question. Off-topic questions are refused without an LLM call."""
+def chat(
+    body: ChatRequest, ctx: TenantContext = Depends(current_tenant)
+) -> ChatResponse:
+    """Ask a question. Off-topic questions are refused without an LLM call.
+
+    The engine is shared but stateless; the corpus and persona it works from
+    are passed in per request, so two tenants chatting concurrently cannot see
+    each other's documents.
+    """
     scope = _parse_scope(body.scope, body.doc_ids)
     result = engine.answer(
         question=body.message,
-        persona=personas.current,
+        persona=ctx.personas.current,
         history=[turn.model_dump() for turn in body.history],
         scope=scope,
+        store=ctx.store,
     )
     return ChatResponse(**result.to_dict())
 

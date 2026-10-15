@@ -106,6 +106,30 @@ class Settings:
     # When True, the bot refuses anything not grounded in the uploaded corpus.
     strict_scope: bool = field(default_factory=lambda: _env_bool("STRICT_SCOPE", True))
 
+    # --- Multi-tenancy ---
+    # Off by default, which keeps every existing single-deployment install
+    # working unchanged: with this False the service exposes one corpus and
+    # needs no credentials, exactly as before.
+    #
+    # The permissive default is a deliberate compatibility choice and it has a
+    # real failure mode — someone serving several customers who forgets to set
+    # it gets no isolation while assuming they have it. Two mitigations, both in
+    # main.py: the active mode is reported by /api/status, and a warning is
+    # logged at startup when tenants are registered but the flag is off.
+    multi_tenant: bool = field(default_factory=lambda: _env_bool("MULTI_TENANT", False))
+
+    # Tenant credentials as "tenant_id:name:api_key", separated by commas or
+    # newlines. Suitable for a demo or a small deployment; a real one should
+    # back TenantRegistry with a database and rotate keys. See
+    # docs/multi-tenancy.md.
+    tenant_config: str = field(default_factory=lambda: os.getenv("TENANTS", ""))
+
+    # The tenant used when multi-tenancy is off, so one code path serves both
+    # modes rather than scattering `if multi_tenant` across every endpoint.
+    default_tenant_id: str = field(
+        default_factory=lambda: os.getenv("DEFAULT_TENANT_ID", "default")
+    )
+
     @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024

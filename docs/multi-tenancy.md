@@ -39,10 +39,10 @@ Each tenant gets its own `DocumentStore` over its own directory:
 data/
 └── tenants/
     ├── acme/
-    │   ├── corpus.json      ← Acme's documents, chunks, and vectors
+    │   ├── corpus.db        ← Acme's documents, chunks, and vectors
     │   └── persona.json     ← Acme's assistant identity
     └── globex/
-        ├── corpus.json
+        ├── corpus.db
         └── persona.json
 ```
 
@@ -105,6 +105,56 @@ curl -H "X-API-Key: acme-key-xxx" localhost:8000/api/documents
 With `MULTI_TENANT=0` (the default) no key is needed and the service exposes a
 single corpus exactly as before.
 
+## Storage
+
+Each tenant's corpus is a SQLite database at `tenants/<id>/corpus.db`.
+
+The previous design was a single JSON file rewritten in full on every mutation.
+It was atomic per write — temp file, `fsync`, rename — and still lost data,
+because atomicity is not the same as isolation. Each worker process held its
+own copy of the whole corpus, so the second save overwrote the first with a
+snapshot that never contained the first worker's document. Reproduced with two
+processes before any of this was written:
+
+```
+uploaded: ['a.md', 'b.md']  (both returned success)
+on disk : ['a.md']
+LOST    : ['b.md']
+```
+
+**The bug was not "JSON" — it was read-modify-write of the entire dataset.** No
+lock fixes that: an in-process lock cannot see another process, and a file lock
+would serialise whole-corpus rewrites into a bottleneck while still losing data
+on a crash between read and write. The fix is to make each mutation touch only
+its own rows inside a transaction the database arbitrates.
+
+Verified against a real four-worker uvicorn server, twelve concurrent uploads:
+
+```
+HTTP responses   : [200] | count: 12
+documents on disk: 12 (expected 12)
+orphaned chunks  : 0
+integrity_check  : ok
+```
+
+Three defects surfaced while stress-testing this, all invisible to
+single-process tests and all only reachable when workers start at the same
+instant:
+
+- `PRAGMA busy_timeout` was set *after* `journal_mode=WAL`, leaving the one
+  statement most likely to contend unprotected. Workers died at startup with
+  `database is locked`.
+- The schema-version row was inserted after a read — check-then-act. Several
+  workers all saw no row, all inserted, and the losers died on the primary key.
+- `busy_timeout` does not cover the lock that switching journal mode needs, so
+  WAL has to be retried explicitly. Failure is logged rather than fatal: WAL is
+  a concurrency optimisation, and crashing a worker over a performance setting
+  is worse than running in the slower mode.
+
+Existing `corpus.json` files are imported automatically on first boot and kept
+as a backup. An upgrade that deletes the only copy of the data before anyone
+has confirmed the new path works is not a migration.
+
 ## Known limits
 
 Stated plainly, because a security feature whose boundaries are vague invites
@@ -124,28 +174,22 @@ checking.
 **No per-tenant resource limits.** One tenant can consume disk and CPU to the
 detriment of others. Isolation here is about *confidentiality*, not fairness.
 
-**`DocumentStore` rewrites its whole corpus per upload.** That cost is now per
-tenant rather than global, which helps, but the O(n²) bytes-written property
-noted in `store.py` is unchanged within a single tenant.
+**No per-tenant disk quota.** A tenant's database grows without limit.
 
 **Contexts are cached and never evicted.** Every tenant that has made a request
 holds its index in memory. Fine for tens of tenants; thousands need an LRU.
 
-**Single process only.** This is the most important limit on the page. Every
-lock here is in-process. Under `--workers N` each worker gets its own registry,
-store, and index while sharing one `DATA_DIR`, and `DocumentStore._save`
-rewrites the *whole* corpus from that worker's in-memory state. Two workers
-ingesting concurrently lose data: whichever save lands second wins completely,
-so a document the other worker just acknowledged with a 200 is gone from disk
-while that worker keeps serving it from memory until restart. Retrieval splits
-too — the same question gets an answer or a refusal depending on which worker
-answered.
+**Index freshness lags across workers.** Document durability is solved — see
+[the storage notes](#storage) — but each worker builds its **search index** in
+memory at startup. A document uploaded through worker 1 is on disk immediately
+and will be loaded by every worker at its next start; until then worker 2
+cannot retrieve it. The same question can be answered or refused depending on
+which worker handles it.
 
-The per-PID temp filename in `store.py` makes each individual write atomic,
-which prevents a *corrupt* file but not a *lost update*. No lock can fix this;
-it needs a shared transactional store. `app/main.py` logs an error at startup
-when it detects `WEB_CONCURRENCY`/`UVICORN_WORKERS` above 1, but that is a
-warning, not a guard.
+This is a staleness window, not data loss, and it closes at restart. Closing it
+properly means workers detecting each other's writes and rebuilding, which is a
+separate piece of work from the durability fix and deliberately not bundled
+with it.
 
 **Concurrency is tested, but not exhaustively.** `test_tenant_regressions.py`
 covers racing cold starts, parallel persona writes, and the cold-start blocking

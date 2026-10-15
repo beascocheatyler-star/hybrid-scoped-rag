@@ -184,6 +184,17 @@ class HybridIndex:
         with self._lock:
             return not self._chunks
 
+    def all_chunks(self) -> List[Chunk]:
+        """A snapshot of every indexed chunk.
+
+        Returns a new list so a caller iterating it cannot be tripped by a
+        concurrent mutation, and so no caller can mutate the index's own list
+        by accident. The Chunk objects themselves are shared, which is what
+        makes this useful for reading freshly computed embeddings back out.
+        """
+        with self._lock:
+            return list(self._chunks)
+
     @property
     def avg_length(self) -> float:
         with self._lock:

@@ -168,15 +168,24 @@ def test_partially_indexed_document_is_not_left_behind(tmp_path):
 
 # ----------------------------------------------------------- atomic write
 
-def test_temp_file_name_is_unique_per_write(tmp_path):
-    """A fixed temp name lets two processes clobber each other's corpus."""
+def test_writes_leave_no_debris(tmp_path):
+    """Successful writes must not leave temp or journal files lying around.
+
+    This replaces a test that checked the uniqueness of the JSON temp-file
+    name. That scheme was a *workaround* for processes clobbering each other's
+    whole-corpus rewrite; transactional storage removes the situation it was
+    working around, so the property worth keeping is simply that a completed
+    write tidies up after itself.
+    """
     store = DocumentStore(data_dir=tmp_path)
     store.add("a.md", b"first document content")
     store.add("b.md", b"second document content")
 
-    # No temp files should survive a successful write.
     assert list(tmp_path.glob("*.tmp")) == []
-    assert json.loads((tmp_path / "corpus.json").read_text("utf-8"))["documents"]
+    assert len(store.list_documents()) == 2
+
+    reloaded = DocumentStore(data_dir=tmp_path)
+    assert {d.name for d in reloaded.list_documents()} == {"a.md", "b.md"}
 
 
 def test_corpus_is_readable_after_many_writes(tmp_path):

@@ -8,6 +8,7 @@ mode available. These tests pin the invalidation behaviour.
 from __future__ import annotations
 
 import json
+import sqlite3
 
 from app.core.embedding import HashingEmbedder
 from app.core.store import DocumentStore
@@ -15,22 +16,61 @@ from app.core.store import DocumentStore
 TEXT = b"The final exam is held in week sixteen of the term."
 
 
-def read_corpus(path):
-    return json.loads((path / "corpus.json").read_text("utf-8"))
+def stored_vectors(path):
+    """Every persisted embedding, decoded, in chunk order.
+
+    Reads the database directly rather than through DocumentStore, so these
+    tests still verify what actually reached disk rather than trusting the
+    in-memory state they are meant to be checking.
+    """
+    conn = sqlite3.connect(str(path / "corpus.db"))
+    try:
+        rows = conn.execute(
+            "SELECT embedding FROM chunks ORDER BY doc_id, position"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [json.loads(r[0]) if r[0] else None for r in rows]
+
+
+def stored_signature(path):
+    conn = sqlite3.connect(str(path / "corpus.db"))
+    try:
+        row = conn.execute(
+            "SELECT value FROM schema_meta WHERE key = 'embedding_signature'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row else None
+
+
+def corrupt_first_vector(path, value):
+    """Write a bad embedding straight into the database."""
+    conn = sqlite3.connect(str(path / "corpus.db"))
+    try:
+        chunk_id = conn.execute(
+            "SELECT chunk_id FROM chunks ORDER BY doc_id, position LIMIT 1"
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE chunks SET embedding = ? WHERE chunk_id = ?",
+            (json.dumps(value), chunk_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_embeddings_are_persisted(tmp_path):
     store = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=256))
     store.add("syllabus.md", TEXT)
 
-    chunk = read_corpus(tmp_path)["documents"][0]["chunks"][0]
-    assert len(chunk["embedding"]) == 256
+    assert len(stored_vectors(tmp_path)[0]) == 256
 
 
 def test_corpus_records_the_embedding_signature(tmp_path):
     store = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=256))
     store.add("syllabus.md", TEXT)
-    assert read_corpus(tmp_path)["embedding_signature"] == "hashing:256"
+    assert stored_signature(tmp_path) == "hashing:256"
 
 
 def test_cached_vectors_are_reused_on_reload(tmp_path):
@@ -48,7 +88,7 @@ def test_changing_dimensions_invalidates_the_cache(tmp_path):
 
     second = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=512))
     assert len(second.index._chunks[0].embedding) == 512
-    assert read_corpus(tmp_path)["embedding_signature"] == "hashing:512"
+    assert stored_signature(tmp_path) == "hashing:512"
 
 
 def test_reembedded_corpus_is_saved_once(tmp_path):
@@ -58,17 +98,14 @@ def test_reembedded_corpus_is_saved_once(tmp_path):
 
     DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=512))
 
-    chunk = read_corpus(tmp_path)["documents"][0]["chunks"][0]
-    assert len(chunk["embedding"]) == 512
+    assert len(stored_vectors(tmp_path)[0]) == 512
 
 
 def test_a_corrupt_vector_is_recomputed_not_trusted(tmp_path):
     store = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=256))
     store.add("syllabus.md", TEXT)
 
-    payload = read_corpus(tmp_path)
-    payload["documents"][0]["chunks"][0]["embedding"] = [0.1, 0.2]  # wrong width
-    (tmp_path / "corpus.json").write_text(json.dumps(payload), "utf-8")
+    corrupt_first_vector(tmp_path, [0.1, 0.2])  # wrong width
 
     reloaded = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=256))
     assert len(reloaded.index._chunks[0].embedding) == 256
@@ -78,9 +115,7 @@ def test_a_non_list_vector_is_recomputed(tmp_path):
     store = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=256))
     store.add("syllabus.md", TEXT)
 
-    payload = read_corpus(tmp_path)
-    payload["documents"][0]["chunks"][0]["embedding"] = "not a vector"
-    (tmp_path / "corpus.json").write_text(json.dumps(payload), "utf-8")
+    corrupt_first_vector(tmp_path, "not a vector")
 
     reloaded = DocumentStore(tmp_path, embedder=HashingEmbedder(dimensions=256))
     assert len(reloaded.index._chunks[0].embedding) == 256

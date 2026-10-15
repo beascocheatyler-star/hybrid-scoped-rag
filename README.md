@@ -19,7 +19,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 341 tests, all offline
+pytest                            # 353 tests, all offline
 python run.py                     # web UI at http://localhost:8000
 ```
 
@@ -204,12 +204,13 @@ Full design, threat model, and limits: [`docs/multi-tenancy.md`](docs/multi-tena
 - **Off-topic refusal is 8/10, not 10/10** on the bundled set. The two misses
   land in `borderline`, where the model is instructed to verify — not in a
   confident answer.
-- **Persistence is a JSON file rewritten per upload.** O(n²) bytes to ingest n
-  documents, chosen so a reviewer can open and read the corpus. ~310 ms at 600
-  documents. For thousands, swap in SQLite; `DocumentStore`'s interface would
-  not change.
-- **The index is in-memory.** Single-process. Horizontal scaling would need a
-  shared vector store.
+- **Persistence is SQLite, one database per tenant.** Each mutation is a
+  transaction touching its own rows, so concurrent writers — including separate
+  worker processes — no longer overwrite each other. It replaced a JSON file
+  rewritten in full per upload, which was atomic per write and still lost
+  documents: see [storage](docs/multi-tenancy.md#storage) for the reproduction.
+- **The index is in-memory and per-process.** Retrieval does not scale
+  horizontally, and a worker's index only reflects what it loaded at startup.
 - **Tenant credentials are env-var plaintext, held in memory.** Fine for a demo
   or a small deployment; a real one needs keys hashed at rest and revocable
   without a restart. `TenantRegistry` is the seam.
@@ -217,11 +218,10 @@ Full design, threat model, and limits: [`docs/multi-tenancy.md`](docs/multi-tena
   means a multi-customer deployment that forgets `MULTI_TENANT=1` gets no
   isolation while appearing to work. `/api/status` reports the live mode and
   startup logs a warning, but neither replaces checking.
-- **Single process only.** Every lock is in-process. Under `--workers N` the
-  workers share `DATA_DIR` but not memory, and `_save` rewrites the whole
-  corpus — so concurrent uploads silently lose documents and retrieval differs
-  between workers. Startup logs an error when it detects multiple workers; it
-  is a warning, not a guard. Fixing it needs a shared transactional store.
+- **Index freshness lags across workers.** Uploads are durable and
+  transactional under `--workers N`, but each worker builds its search index at
+  startup, so a document uploaded via one worker is not retrievable from
+  another until that worker restarts. A staleness window, not data loss.
 - **The first implementation of tenancy shipped an auth bypass**, found by
   auditing rather than by its own 52 passing tests. Six defects are written up
   in [`docs/multi-tenancy.md`](docs/multi-tenancy.md#what-the-audit-found) and
@@ -300,6 +300,7 @@ app/
     metadata.py        ScopeFilter parsing and matching
     guard.py           The two-layer scope gate
     store.py           Ingest, tag, persist, reload
+    corpus_db.py       Transactional SQLite persistence
     chunking.py        Boundary-aware splitting
     extract.py         PDF / DOCX / CSV / JSON / MD / TXT
     persona.py         Who the bot is and what it covers
@@ -308,7 +309,7 @@ web/                   Vanilla JS UI, no build step
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
-tests/                 341 offline tests
+tests/                 353 offline tests
 ```
 
 ## Testing

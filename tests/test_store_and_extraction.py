@@ -182,9 +182,18 @@ def test_a_corrupt_corpus_file_does_not_prevent_startup(tmp_path):
     assert store.is_empty
 
 
-def test_corpus_file_is_valid_json(tmp_path):
+def test_corpus_is_persisted_to_the_database(tmp_path):
+    import sqlite3
+
     store = DocumentStore(data_dir=tmp_path)
     store.add("a.md", b"content for the corpus")
-    payload = json.loads((tmp_path / "corpus.json").read_text("utf-8"))
-    assert payload["version"] == 2
-    assert len(payload["documents"]) == 1
+
+    conn = sqlite3.connect(str(tmp_path / "corpus.db"))
+    try:
+        docs = conn.execute("SELECT name FROM documents").fetchall()
+        chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert [d[0] for d in docs] == ["a.md"]
+    assert chunks >= 1

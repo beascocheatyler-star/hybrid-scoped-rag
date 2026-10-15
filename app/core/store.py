@@ -1,16 +1,27 @@
 """Document lifecycle: ingest, tag, persist, reload, delete.
 
-The corpus is persisted as JSON on disk so a restart does not lose uploads. The
-hybrid index is rebuilt from that JSON at boot — cheap, and it avoids shipping a
-binary index format that would be hard for a reviewer to inspect.
+The corpus lives in a SQLite database (``corpus.db``) and the hybrid index is
+rebuilt from it at boot. Embeddings are cached in the ``chunks`` table, keyed by
+the embedder's name and dimensions, so switching backends invalidates them
+rather than silently mixing incompatible vector spaces — vectors from two
+different embedders are not comparable, and a stale cache would produce
+confidently wrong rankings.
 
-**Changed from the predecessor:** documents carry metadata, and chunk embeddings
-are cached in the corpus file. Caching matters because re-embedding the whole
-corpus at every boot is the one genuinely slow step once the optional
-sentence-transformers backend is in use. The cache is keyed by the embedder's
-name and dimensions, so switching backends invalidates it rather than silently
-mixing incompatible vector spaces — vectors from two different embedders are not
-comparable, and a stale cache would produce confidently wrong rankings.
+**Changed from the previous version: persistence is transactional.** The corpus
+used to be a single JSON file rewritten in full on every mutation. That was
+atomic per write and still lossy, because each worker process held its own copy
+of the whole corpus: the second save overwrote the first with a snapshot that
+never contained the first worker's document. Both uploads returned 200 and one
+document was permanently gone.
+
+Every mutation now touches only its own rows, inside a transaction, so
+concurrent writers no longer clobber each other's work. See
+``app/core/corpus_db.py`` for the reproduction and the reasoning.
+
+**Still per-process: the search index.** Durability and index freshness are
+different problems, and only the first is solved here. A document written by
+one worker is safely on disk and will be loaded by every worker at its next
+start, but another worker's live index does not learn about it until then.
 """
 
 from __future__ import annotations
@@ -18,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
+import sqlite3
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -27,6 +38,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.core.chunking import chunk_text
+from app.core.corpus_db import CorpusDB, migrate_json_corpus
 from app.core.embedding import Embedder, get_embedder
 from app.core.extract import extract
 from app.core.metadata import ScopeFilter, collect_facets, normalize_metadata
@@ -34,8 +46,6 @@ from app.core.retrieval import Chunk, HybridIndex, RRF_K_DEFAULT
 
 
 logger = logging.getLogger(__name__)
-
-CORPUS_VERSION = 2
 
 
 def _utcnow() -> str:
@@ -93,10 +103,16 @@ class DocumentStore:
 
         self._lock = threading.RLock()
         self._documents: Dict[str, Document] = {}
-        self._chunks_by_doc: Dict[str, List[Dict]] = {}
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self._corpus_path = self.data_dir / "corpus.json"
+        self.db = CorpusDB(self.data_dir / "corpus.db")
+
+        # An existing JSON corpus is imported once, on the first boot after the
+        # upgrade. The file is kept as a backup and never read again.
+        if self.db.document_count() == 0:
+            migrate_json_corpus(self._corpus_path, self.db)
+
         self._load()
 
     @property
@@ -107,86 +123,80 @@ class DocumentStore:
     # --- persistence ---------------------------------------------------
 
     def _load(self) -> None:
-        """Rebuild state from disk.
+        """Rebuild in-memory state and the search index from the database.
 
-        Runs at import time, so no shape of corrupt file may prevent startup.
-        Each document is loaded independently: one bad entry is skipped rather
-        than discarding the rest of a salvageable corpus.
+        Each document is loaded independently: one bad row is skipped rather
+        than discarding the rest of a salvageable corpus. That tolerance
+        predates the database and is kept, because a corpus that mostly works
+        is worth more than a clean failure at boot.
         """
-        if not self._corpus_path.exists():
-            return
-        try:
-            raw = json.loads(self._corpus_path.read_text("utf-8"))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
-            logger.warning(
-                "Could not parse %s; starting with an empty knowledge base.",
-                self._corpus_path,
-            )
-            return
-
-        if not isinstance(raw, dict):
-            logger.warning("%s is not a JSON object; ignoring.", self._corpus_path)
-            return
-
-        documents = raw.get("documents")
-        if not isinstance(documents, list):
-            return
-
-        cached_signature = raw.get("embedding_signature")
+        cached_signature = self.db.embedding_signature()
         reuse_vectors = cached_signature == self._embedding_signature
-        if documents and not reuse_vectors:
+
+        rows = self.db.all_documents()
+        if rows and not reuse_vectors:
             logger.info(
                 "Embedding backend changed (%s -> %s); re-embedding the corpus.",
                 cached_signature,
                 self._embedding_signature,
             )
 
-        for entry in documents:
+        for row in rows:
             try:
-                self._load_one(entry, reuse_vectors=reuse_vectors)
+                self._load_one(row, reuse_vectors=reuse_vectors)
             except Exception:
-                logger.warning("Skipping an unreadable document entry.", exc_info=True)
+                logger.warning("Skipping an unreadable document row.", exc_info=True)
 
-        # A corpus loaded without reusable vectors has just been re-embedded in
-        # memory; persist it so the next boot is fast.
-        if documents and not reuse_vectors and self._documents:
+        if not rows:
+            # An empty corpus has no vectors to be stale, but the signature
+            # must still be recorded: the first document written next will be
+            # embedded by *this* embedder, and leaving the slot empty would
+            # make the following boot think the space was unknown.
+            if cached_signature is None:
+                self.db.set_embedding_signature(self._embedding_signature)
+            return
+
+        if not reuse_vectors and self._documents:
+            # The corpus has just been re-embedded in memory. Persist the new
+            # vectors so the next boot is fast, writing only the embedding
+            # column rather than rewriting the corpus.
             try:
-                self._save()
-            except OSError:
-                logger.warning("Could not persist re-embedded corpus.", exc_info=True)
+                fresh = {
+                    chunk.chunk_id: chunk.embedding
+                    for chunk in self.index.all_chunks()
+                }
+                self.db.update_embeddings(fresh)
+                self.db.set_embedding_signature(self._embedding_signature)
+            except sqlite3.DatabaseError:
+                logger.warning("Could not persist re-embedded vectors.", exc_info=True)
+        elif cached_signature is None:
+            self.db.set_embedding_signature(self._embedding_signature)
 
-    def _load_one(self, entry, reuse_vectors: bool = True) -> None:
-        """Load a single persisted document. Raises if the entry is unusable."""
-        if not isinstance(entry, dict):
-            raise ValueError("document entry is not an object")
-
-        meta_fields = dict(entry["meta"])
-        # Version 1 corpora (written by the predecessor project) have no
-        # metadata key. Tolerating them means an existing deployment can be
-        # upgraded in place rather than re-uploading everything.
-        raw_metadata = meta_fields.pop("metadata", None)
-        doc = Document(**meta_fields)
-        doc.metadata = normalize_metadata(raw_metadata)
-
-        raw_chunks = entry.get("chunks")
-        if not isinstance(raw_chunks, list):
-            raw_chunks = []
+    def _load_one(self, row, reuse_vectors: bool = True) -> None:
+        """Load one persisted document. Raises if the row is unusable."""
+        doc = Document(
+            doc_id=row["doc_id"],
+            name=row["name"],
+            size_bytes=int(row["size_bytes"]),
+            chunk_count=int(row["chunk_count"]),
+            char_count=int(row["char_count"]),
+            sha256=row["sha256"],
+            uploaded_at=row["uploaded_at"],
+        )
+        doc.metadata = normalize_metadata(json.loads(row["metadata"] or "{}"))
 
         # Validate every chunk before mutating any state, so a bad chunk midway
         # through cannot leave the document half-indexed.
         chunks = []
-        for c in raw_chunks:
-            if not isinstance(c, dict):
-                continue
-            vector = c.get("embedding") if reuse_vectors else None
-            if vector is not None:
+        for c in self.db.chunks_for(doc.doc_id):
+            vector = None
+            if reuse_vectors and c["embedding"]:
+                candidate = json.loads(c["embedding"])
                 if (
-                    not isinstance(vector, list)
-                    or len(vector) != self.embedder.dimensions
+                    isinstance(candidate, list)
+                    and len(candidate) == self.embedder.dimensions
                 ):
-                    vector = None
-                else:
-                    vector = [float(v) for v in vector]
+                    vector = [float(v) for v in candidate]
             chunks.append(
                 Chunk(
                     chunk_id=str(c["chunk_id"]),
@@ -201,65 +211,6 @@ class DocumentStore:
 
         self._documents[doc.doc_id] = doc
         self.index.add_chunks(chunks)
-        # Serialise *after* indexing, so freshly computed vectors are captured.
-        self._chunks_by_doc[doc.doc_id] = [self._serialize_chunk(c) for c in chunks]
-
-    @staticmethod
-    def _serialize_chunk(chunk: Chunk) -> Dict:
-        return {
-            "chunk_id": chunk.chunk_id,
-            "position": chunk.position,
-            "text": chunk.text,
-            "embedding": chunk.embedding,
-        }
-
-    def _save(self) -> None:
-        """Rewrite the whole corpus to disk.
-
-        This is O(total corpus size) per upload, i.e. O(n²) bytes written to
-        ingest n documents. That is a deliberate trade for a file a reviewer can
-        open and read. Embedding vectors make each document heavier than in the
-        predecessor — roughly 8 KB per chunk at 1024 dimensions — so the
-        crossover where this becomes noticeable arrives sooner. Measured on the
-        bundled syllabus (~7 chunks/doc):
-
-            100 docs → 48 ms/upload    300 docs → 150 ms    600 docs → 310 ms
-
-        Still fine for the scale this targets, and the remedy is unchanged: for
-        thousands of documents, replace this with SQLite or an append-only chunk
-        log. The ``DocumentStore`` interface would not change.
-        """
-        payload = {
-            "version": CORPUS_VERSION,
-            "saved_at": _utcnow(),
-            "embedding_signature": self._embedding_signature,
-            "documents": [
-                {
-                    "meta": self._documents[doc_id].to_dict(),
-                    "chunks": self._chunks_by_doc.get(doc_id, []),
-                }
-                for doc_id in self._documents
-            ],
-        }
-        # The temp name must be unique per writer: a fixed name lets two
-        # processes (e.g. `uvicorn --workers 2` over one DATA_DIR) interleave
-        # their writes and then rename each other's partial file into place.
-        # The in-process lock cannot prevent that, so the filename must.
-        tmp = self._corpus_path.with_name(
-            "corpus.{}.{}.tmp".format(os.getpid(), uuid.uuid4().hex[:8])
-        )
-        try:
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(payload, fh, ensure_ascii=False)
-                fh.flush()
-                # Force the bytes to disk before the rename, so a power loss
-                # cannot leave a zero-length file where the corpus used to be.
-                os.fsync(fh.fileno())
-            tmp.replace(self._corpus_path)  # atomic within a filesystem
-        except OSError:
-            logger.exception("Failed to persist the corpus to %s", self._corpus_path)
-            tmp.unlink(missing_ok=True)
-            raise
 
     # --- queries -------------------------------------------------------
 
@@ -314,9 +265,14 @@ class DocumentStore:
         clean_metadata = normalize_metadata(metadata)
 
         with self._lock:
-            for existing in self._documents.values():
-                if existing.sha256 == digest:
-                    raise DuplicateDocumentError(existing)
+            # Checked against the database, not the in-memory dict. Another
+            # worker may have ingested these bytes since this process started,
+            # and its document would be invisible to an in-memory scan. The
+            # UNIQUE index on sha256 is the actual guarantee — this lookup
+            # exists to raise the friendly error before hitting it.
+            existing_row = self.db.find_by_sha256(digest)
+            if existing_row is not None:
+                raise DuplicateDocumentError(self._document_from_row(existing_row))
 
             pieces = chunk_text(text, self.chunk_size, self.overlap)
             doc_id = uuid.uuid4().hex[:12]
@@ -343,11 +299,56 @@ class DocumentStore:
                 for i, piece in enumerate(pieces)
             ]
 
-            self._documents[doc_id] = doc
+            # Indexed first so the chunks carry their embeddings, then written
+            # in one transaction. If the write fails the index is rolled back
+            # too, rather than leaving a document that is searchable in this
+            # process and absent from every other one.
             self.index.add_chunks(chunks)
-            self._chunks_by_doc[doc_id] = [self._serialize_chunk(c) for c in chunks]
-            self._save()
+            try:
+                self.db.insert_document(
+                    doc.to_dict(),
+                    [self._serialize_chunk(c) for c in chunks],
+                )
+            except sqlite3.IntegrityError as exc:
+                self.index.remove_document(doc_id)
+                # Lost the race to another worker between the check above and
+                # this insert. The UNIQUE index caught it, which is the point
+                # of enforcing it in the database rather than in Python.
+                race_winner = self.db.find_by_sha256(digest)
+                if race_winner is not None:
+                    raise DuplicateDocumentError(
+                        self._document_from_row(race_winner)
+                    ) from exc
+                raise
+            except Exception:
+                self.index.remove_document(doc_id)
+                raise
+
+            self._documents[doc_id] = doc
             return doc
+
+    @staticmethod
+    def _serialize_chunk(chunk: Chunk) -> Dict:
+        return {
+            "chunk_id": chunk.chunk_id,
+            "position": chunk.position,
+            "text": chunk.text,
+            "embedding": chunk.embedding,
+        }
+
+    @staticmethod
+    def _document_from_row(row) -> Document:
+        doc = Document(
+            doc_id=row["doc_id"],
+            name=row["name"],
+            size_bytes=int(row["size_bytes"]),
+            chunk_count=int(row["chunk_count"]),
+            char_count=int(row["char_count"]),
+            sha256=row["sha256"],
+            uploaded_at=row["uploaded_at"],
+        )
+        doc.metadata = normalize_metadata(json.loads(row["metadata"] or "{}"))
+        return doc
 
     def set_metadata(
         self, doc_id: str, metadata: Optional[Dict[str, object]]
@@ -358,24 +359,29 @@ class DocumentStore:
             doc = self._documents.get(doc_id)
             if doc is None:
                 return None
+            # The UPDATE touches one row, so a concurrent upload or delete of a
+            # different document cannot be clobbered by it.
+            if not self.db.update_metadata(doc_id, clean):
+                # Deleted by another worker between the lookup and here.
+                self._documents.pop(doc_id, None)
+                self.index.remove_document(doc_id)
+                return None
             doc.metadata = clean
             self.index.update_metadata(doc_id, clean)
-            self._save()
             return doc
 
     def delete(self, doc_id: str) -> bool:
         with self._lock:
-            if doc_id not in self._documents:
-                return False
-            del self._documents[doc_id]
-            self._chunks_by_doc.pop(doc_id, None)
+            # The database is the authority on existence: another worker may
+            # have removed this document, and returning True for a no-op delete
+            # would report success for work that did not happen.
+            removed = self.db.delete_document(doc_id)
+            self._documents.pop(doc_id, None)
             self.index.remove_document(doc_id)
-            self._save()
-            return True
+            return removed
 
     def clear(self) -> None:
         with self._lock:
+            self.db.clear()
             self._documents = {}
-            self._chunks_by_doc = {}
             self.index.clear()
-            self._save()

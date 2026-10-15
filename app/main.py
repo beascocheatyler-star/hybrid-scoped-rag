@@ -139,24 +139,24 @@ engine = ChatEngine(settings=settings)
 
 
 def _warn_if_multiprocess() -> None:
-    """Warn loudly when the process looks like one of several sharing DATA_DIR.
+    """Note the remaining multi-worker caveat, which is now about freshness.
 
-    Every lock in this project is in-process. Run under ``--workers N`` each
-    worker gets its own registry, store, and index while sharing one DATA_DIR,
-    and ``DocumentStore._save`` rewrites the *whole* corpus from that worker's
-    in-memory state. Two workers ingesting concurrently therefore lose data:
-    whichever save lands second wins completely, and the document the other
-    worker just acknowledged with a 200 is gone from disk — while that worker
-    keeps serving it from memory until restart. Retrieval also splits, since
-    each worker's index reflects only its own uploads.
+    Document *durability* across workers is solved: the corpus is a SQLite
+    database and every mutation is a transaction touching its own rows, so
+    concurrent uploads no longer overwrite each other. That was the serious
+    bug — a worker would acknowledge an upload with a 200 and another worker's
+    whole-corpus rewrite would silently erase it.
 
-    The temp-file-per-PID trick in ``store.py`` makes each individual write
-    atomic, which prevents a *corrupt* file but not a *lost update*.
+    What remains is weaker and bounded: each worker keeps its **search index**
+    in memory, built at startup. A document uploaded through worker 1 is safely
+    on disk immediately, but worker 2 will not retrieve it until worker 2
+    restarts. So the same question can be answered or refused depending on
+    which worker handles it.
 
-    This cannot be fixed with a lock; it needs a shared store (SQLite with
-    proper transactions, or a real database). Until then the honest thing is to
-    make the unsafe configuration visible rather than let it silently drop
-    documents.
+    This is a staleness window, not data loss, and it closes at the next
+    restart. Fixing it properly means workers detecting each other's writes and
+    rebuilding — a different piece of work, deliberately not bundled with the
+    durability fix.
     """
     workers = os.environ.get("WEB_CONCURRENCY") or os.environ.get("UVICORN_WORKERS")
     try:
@@ -165,11 +165,11 @@ def _warn_if_multiprocess() -> None:
         count = 1
 
     if count > 1:
-        logger.error(
-            "Detected %s worker processes sharing DATA_DIR=%s. Every lock here "
-            "is in-process, so concurrent uploads WILL silently lose documents "
-            "and retrieval will differ between workers. Run with a single "
-            "worker until the corpus is backed by a shared store.",
+        logger.warning(
+            "Running %s workers over DATA_DIR=%s. Uploads are durable and "
+            "transactional, but each worker's search index is built at startup: "
+            "a document uploaded via one worker is not retrievable from another "
+            "until that worker restarts.",
             count,
             settings.data_dir,
         )

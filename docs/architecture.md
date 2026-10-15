@@ -157,14 +157,20 @@ additionally wrapped in explicit delimiters so the boundary is unambiguous.
 On the frontend, all document-derived text is HTML-escaped before any markdown
 rendering, so a document cannot inject script into the reviewer's browser.
 
-### Persistence as readable JSON
+### Persistence as an inspectable database
 
-`data/corpus.json` holds the documents and their chunks. A reviewer can open it
-and see exactly what the bot knows. The hybrid index is rebuilt from it at
-startup — cheap at this scale, and it avoids a binary format nobody can inspect.
+`corpus.db` holds the documents and their chunks, one database per tenant. A
+reviewer can open it with any SQLite client and see exactly what the bot knows.
+The hybrid index is rebuilt from it at startup — cheap at this scale, and it
+avoids a binary index format nobody can inspect.
 
-Writes go to a temp file and are atomically renamed, so an interrupted write
-cannot truncate the corpus.
+Every mutation is a transaction touching only its own rows. This replaced a
+single JSON file rewritten in full on each write, which was atomic per write
+and still lost documents when two worker processes ingested at once: each held
+its own copy of the whole corpus, so the second save erased the first. The
+lesson generalises — *atomicity is not isolation*, and a read-modify-write of
+an entire dataset is unsafe however carefully the write itself is performed.
+See [`multi-tenancy.md`](multi-tenancy.md#storage).
 
 ---
 
@@ -176,6 +182,12 @@ sentence-transformers backend it is by far the slowest step, and holding the
 lock through it would stall every concurrent chat.
 FastAPI serves requests from a thread pool, and uploads mutate the index while
 chat requests read it, so this is load-bearing rather than defensive.
+
+Across *processes*, those locks are worthless — a lock in one worker is
+invisible to another. Durability is handled a level down instead, by SQLite
+transactions, which is why the persistence layer and not a mutex is what makes
+`--workers N` safe. What remains per-process is the in-memory index: a worker
+only retrieves what it loaded at startup plus its own writes.
 
 ---
 

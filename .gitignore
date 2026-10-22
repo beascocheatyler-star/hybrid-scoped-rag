@@ -1,6 +1,20 @@
 # Secrets — never commit a real key
 .env
 
+# SSH / private keys. A mistyped `ssh-keygen` prompt once wrote a keypair
+# into this directory, so these patterns are a guard against `git add -A`
+# publishing one. Private keys belong in ~/.ssh, never in a project tree.
+id_rsa
+id_ecdsa
+id_ed25519
+*.pem
+*.key
+*_rsa
+*_ecdsa
+*_ed25519
+ssh-agent*
+*ssh-agent*
+
 # Runtime data (uploaded documents and the persisted index)
 data/
 *.tmp

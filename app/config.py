@@ -91,7 +91,7 @@ class Settings:
     # Dense similarity at or above which a question failing the lexical gate is
     # promoted to borderline rather than refused. Set to 1.0 to disable.
     dense_rescue_floor: float = field(
-        default_factory=lambda: _env_float("DENSE_RESCUE_FLOOR", 0.25)
+        default_factory=lambda: _env_float("DENSE_RESCUE_FLOOR", 0.36)
     )
 
     # --- Storage ---

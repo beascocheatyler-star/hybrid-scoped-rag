@@ -269,4 +269,5 @@ which did lexical-only retrieval over a flat corpus.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE). Derivative works
+must also be distributed under GPL-3.0 with source available.

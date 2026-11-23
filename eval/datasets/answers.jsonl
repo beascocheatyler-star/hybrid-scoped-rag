@@ -8,3 +8,9 @@
 {"notebook": "support", "question": "How long is the warranty?", "reference_facts": ["2-year"]}
 {"notebook": "support", "question": "When will my refund be issued?", "reference_facts": ["3 business days", "5–10 business days"]}
 {"notebook": "support", "question": "Can I cancel my order?", "reference_facts": ["60 minutes"]}
+{"notebook": "constitution", "question": "How long is a Senator's term?", "reference_facts": ["six Years"]}
+{"notebook": "constitution", "question": "How many states had to ratify the Constitution?", "reference_facts": ["nine States"]}
+{"notebook": "faraday", "question": "Where does a sperm candle come from?", "reference_facts": ["spermaceti whale"]}
+{"notebook": "faraday", "question": "How does fuel reach the flame?", "reference_facts": ["capillary attraction"]}
+{"notebook": "darwin", "question": "What did the winter of 1854-55 do to birds?", "reference_facts": ["four-fifths"]}
+{"notebook": "darwin", "question": "Which bees visit red clover?", "reference_facts": ["humble-bees"]}

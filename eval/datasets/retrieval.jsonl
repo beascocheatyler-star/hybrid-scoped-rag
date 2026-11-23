@@ -75,3 +75,51 @@
 {"notebook": "support", "question": "¿Cuánto cuesta el envío exprés?", "relevant_spans": ["$14.95"], "kind": "non_english"}
 {"notebook": "support", "question": "Как вернуть товар?", "relevant_spans": ["Orders → Return an item"], "kind": "non_english"}
 {"notebook": "support", "question": "保修期多长？", "relevant_spans": ["2-year limited warranty"], "kind": "non_english"}
+{"notebook": "constitution", "question": "What is the minimum age to be a Representative?", "relevant_spans": ["age of twenty five Years"], "kind": "lexical"}
+{"notebook": "constitution", "question": "How many Senators does each State have?", "relevant_spans": ["two Senators from each State"], "kind": "lexical"}
+{"notebook": "constitution", "question": "What is the minimum age for a Senator?", "relevant_spans": ["Age of thirty Years"], "kind": "lexical"}
+{"notebook": "constitution", "question": "Who has the sole power to try impeachments?", "relevant_spans": ["sole Power to try all Impeachments"], "kind": "lexical"}
+{"notebook": "constitution", "question": "When can the writ of habeas corpus be suspended?", "relevant_spans": ["Writ of Habeas Corpus shall not be suspended"], "kind": "lexical"}
+{"notebook": "constitution", "question": "How long is the President's term of office?", "relevant_spans": ["Term of four Years"], "kind": "lexical"}
+{"notebook": "constitution", "question": "Who is Commander in Chief of the Army and Navy?", "relevant_spans": ["Commander in Chief of the Army and Navy"], "kind": "lexical"}
+{"notebook": "constitution", "question": "How many states had to ratify the Constitution?", "relevant_spans": ["Conventions of nine States"], "kind": "lexical"}
+{"notebook": "constitution", "question": "How long do Senators serve?", "relevant_spans": ["for six Years"], "kind": "paraphrase"}
+{"notebook": "constitution", "question": "Can someone born abroad become head of state?", "relevant_spans": ["natural born Citizen"], "kind": "paraphrase"}
+{"notebook": "constitution", "question": "What counts as betraying the country?", "relevant_spans": ["levying War against them"], "kind": "paraphrase"}
+{"notebook": "constitution", "question": "Can states print their own currency?", "relevant_spans": ["coin Money"], "kind": "paraphrase"}
+{"notebook": "constitution", "question": "How do you change the founding document?", "relevant_spans": ["shall propose Amendments"], "kind": "paraphrase"}
+{"notebook": "constitution", "question": "¿Cuántos senadores tiene cada estado?", "relevant_spans": ["two Senators from each State"], "kind": "non_english"}
+{"notebook": "constitution", "question": "Combien d'années dure le mandat du Président ?", "relevant_spans": ["Term of four Years"], "kind": "non_english"}
+{"notebook": "constitution", "question": "总统的任期是几年？", "relevant_spans": ["Term of four Years"], "kind": "non_english"}
+{"notebook": "faraday", "question": "How are dipped candles made?", "relevant_spans": ["dipped into melted tallow"], "kind": "lexical"}
+{"notebook": "faraday", "question": "Who supplied the candle illustrations?", "relevant_spans": ["Mr. Field, of Lambeth"], "kind": "lexical"}
+{"notebook": "faraday", "question": "What substance comes out of tallow in the chemical change?", "relevant_spans": ["Glycerin"], "kind": "lexical"}
+{"notebook": "faraday", "question": "Where does a sperm candle come from?", "relevant_spans": ["spermaceti whale"], "kind": "lexical"}
+{"notebook": "faraday", "question": "What wax was brought from Japan?", "relevant_spans": ["brought from Japan"], "kind": "lexical"}
+{"notebook": "faraday", "question": "Which candle was taken out of the Royal George?", "relevant_spans": ["Royal George"], "kind": "lexical"}
+{"notebook": "faraday", "question": "What is capillary attraction in a candle?", "relevant_spans": ["capillary attraction that the fuel is conveyed"], "kind": "lexical"}
+{"notebook": "faraday", "question": "Why does a candle gutter?", "relevant_spans": ["guttering round about it"], "kind": "lexical"}
+{"notebook": "faraday", "question": "How does the molten fuel climb up to the burning part?", "relevant_spans": ["capillary attraction that the fuel is conveyed"], "kind": "paraphrase"}
+{"notebook": "faraday", "question": "What made the top of the candle form a bowl shape?", "relevant_spans": ["a beautiful cup is formed"], "kind": "paraphrase"}
+{"notebook": "faraday", "question": "Which animal fat was used for cheap candles?", "relevant_spans": ["the fat of the ox"], "kind": "paraphrase"}
+{"notebook": "faraday", "question": "Which whale product makes candles?", "relevant_spans": ["spermaceti whale"], "kind": "paraphrase"}
+{"notebook": "faraday", "question": "What safety devices replaced the steel-mill in coal mines?", "relevant_spans": ["Davy-lamp"], "kind": "paraphrase"}
+{"notebook": "faraday", "question": "¿Cómo se hacen las velas de sebo?", "relevant_spans": ["dipped into melted tallow"], "kind": "non_english"}
+{"notebook": "faraday", "question": "Qu'est-ce que l'attraction capillaire ?", "relevant_spans": ["capillary attraction that the fuel is conveyed"], "kind": "non_english"}
+{"notebook": "faraday", "question": "蜡烛是怎么做的？", "relevant_spans": ["dipped into melted tallow"], "kind": "non_english"}
+{"notebook": "darwin", "question": "Whose doctrine is applied to the animal and vegetable kingdoms?", "relevant_spans": ["doctrine of Malthus"], "kind": "lexical"}
+{"notebook": "darwin", "question": "What did Linnaeus calculate about an annual plant producing two seeds?", "relevant_spans": ["annual plant produced only two seeds"], "kind": "lexical"}
+{"notebook": "darwin", "question": "Which animal is the slowest breeder?", "relevant_spans": ["elephant is reckoned to be the slowest breeder"], "kind": "lexical"}
+{"notebook": "darwin", "question": "How many birds did the winter of 1854-55 destroy?", "relevant_spans": ["four-fifths of the birds"], "kind": "lexical"}
+{"notebook": "darwin", "question": "What happened on the barren heath in Staffordshire?", "relevant_spans": ["In Staffordshire"], "kind": "lexical"}
+{"notebook": "darwin", "question": "Do cattle determine the existence of the Scotch fir?", "relevant_spans": ["cattle absolutely determine the existence of the Scotch fir"], "kind": "lexical"}
+{"notebook": "darwin", "question": "Why have cattle never run wild in Paraguay?", "relevant_spans": ["Paraguay offers the most curious instance"], "kind": "lexical"}
+{"notebook": "darwin", "question": "Which bees fertilise red clover?", "relevant_spans": ["humble-bees alone visit the common red clover"], "kind": "lexical"}
+{"notebook": "darwin", "question": "Which young plants suffer most?", "relevant_spans": ["it is the seedlings which suffer most"], "kind": "paraphrase"}
+{"notebook": "darwin", "question": "What would happen to clover if bumblebees died out?", "relevant_spans": ["heartsease and red clover would become very rare"], "kind": "paraphrase"}
+{"notebook": "darwin", "question": "What controls the number of bumblebees in a district?", "relevant_spans": ["number of field-mice"], "kind": "paraphrase"}
+{"notebook": "darwin", "question": "Why do populations not explode without limit?", "relevant_spans": ["must suffer destruction during some period of its life"], "kind": "paraphrase"}
+{"notebook": "darwin", "question": "How many tiny trees did he count in a small plot?", "relevant_spans": ["counted thirty-two little trees"], "kind": "paraphrase"}
+{"notebook": "darwin", "question": "¿Qué animal se reproduce más lentamente?", "relevant_spans": ["elephant is reckoned to be the slowest breeder"], "kind": "non_english"}
+{"notebook": "darwin", "question": "Welche Bienen bestäuben den Rotklee?", "relevant_spans": ["humble-bees alone visit the common red clover"], "kind": "non_english"}
+{"notebook": "darwin", "question": "哪种动物繁殖最慢？", "relevant_spans": ["elephant is reckoned to be the slowest breeder"], "kind": "non_english"}

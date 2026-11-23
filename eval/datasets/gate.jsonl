@@ -78,3 +78,83 @@
 {"notebook": "both", "scope": {"course": "cs1428"}, "question": "Do gift cards expire?", "expected": "refuse"}
 {"notebook": "both", "scope": {"dept": "support"}, "question": "Is ChatGPT allowed on homework?", "expected": "refuse"}
 {"notebook": "both", "scope": {"no_such_key": "x"}, "question": "When is the final exam?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "What is the minimum age to be a Representative?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "How many Senators does each State have?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Who has the power of impeachment?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "When can habeas corpus be suspended?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "How long is the President's term?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Who can make treaties?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "What is the definition of treason?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "How are amendments proposed?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Who presides when the President is tried?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Can a state coin money?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Are bills of attainder allowed?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "How many states were needed for ratification?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Is trial by jury required for crimes?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "How are dipped candles made?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What is a sperm candle made from?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "How does capillary attraction feed the flame?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "Why is a cup formed at the top of a candle?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What causes a candle to gutter?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What is stearin made from?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What candle was recovered from the Royal George?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "How are moulded candles made?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What does the lamp-glass do for the flame?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What wax came from Japan?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What is glycerin in candle making?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "Who is Mr. Field of Lambeth?", "expected": "answer"}
+{"notebook": "faraday", "scope": null, "question": "What are bees-wax candles?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What is the doctrine of Malthus?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What is the geometrical ratio of increase?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "How slowly does the elephant breed?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What did the winter of 1854-55 do to birds?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "How do cattle affect the Scotch fir?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "Why are there no feral cattle in Paraguay?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "Which bees visit red clover?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What destroys humble-bee nests?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "Do seedlings suffer most from competition?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What changed on the Staffordshire heath after planting?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What did Linnaeus calculate about seeds?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "Is the struggle for life most severe within a species?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "How does climate check population increase?", "expected": "answer"}
+{"notebook": "darwin", "scope": null, "question": "What is the struggle for existence?", "expected": "answer"}
+{"notebook": "constitution", "scope": null, "question": "Who is the current President of France?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "What did the Supreme Court rule in Roe v. Wade?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "How do I register to vote in Texas?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "What is the capital of Australia?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "Give me a recipe for apple pie.", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "How much does a senator earn today?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "Which army won the Battle of Waterloo?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "Write a Python function to reverse a list.", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "What is the best credit card for travel?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "Explain how vaccines work.", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "Who wrote Pride and Prejudice?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "How does the Navy SEAL selection process work?", "expected": "refuse"}
+{"notebook": "constitution", "scope": null, "question": "What is the speed of light?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "How do I light a gas stove safely?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "What are the best scented candles to buy online?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "Who won the Nobel Prize in Chemistry in 2020?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "What is the capital of Japan?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "How do I train for a marathon?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "Explain the French Revolution.", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "Write me a cover letter for a barista job.", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "How do whales communicate?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "What is the stock price of Apple?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "How do I fix a leaking faucet?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "What is a black hole?", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "Recommend a good fantasy novel.", "expected": "refuse"}
+{"notebook": "faraday", "scope": null, "question": "When does daylight saving time start?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "How do I win an argument with my landlord?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "What is the population of India today?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "How do I make cold brew coffee?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "Who won the 2018 FIFA World Cup?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "Explain blockchain technology.", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "What is the tallest mountain in Africa?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "How do I set up a Kubernetes cluster?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "Write a haiku about autumn.", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "What is the best diet for weight loss?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "Who painted the Mona Lisa?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "How do I change a car tire?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "What does a mortgage broker do?", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "Translate thank you into Italian.", "expected": "refuse"}
+{"notebook": "darwin", "scope": null, "question": "What are the rules of chess?", "expected": "refuse"}

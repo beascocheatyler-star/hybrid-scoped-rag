@@ -145,9 +145,11 @@ in-scope questions    min 0.115  median 0.195  max 0.361
 off-topic questions   min 0.038  median 0.124  max 0.206
 ```
 
-The distributions overlap, so no threshold separates them cleanly. `0.25` sits
-just above the off-topic maximum. A false accept costs one *guarded* LLM call,
-not a wrong answer.
+The distributions overlap, so no threshold separates them cleanly. The floor
+must sit above the off-topic maximum. On the larger 160-question eval set the
+off-topic maximum is 0.356, so the default is `0.36` (`scripts/measure_rescue.py`;
+see `docs/scope-tuning.md`). A false accept costs one *guarded* LLM call, not a
+wrong answer.
 
 Rescue is suppressed when `RELEVANCE_FLOOR` is raised above the confident band:
 raising the floor must never make the bot answer *more* questions.
@@ -167,13 +169,22 @@ raising the floor must never make the bot answer *more* questions.
   (then re-run `measure_hybrid.py`, as the rescue floor wants to be ~0.5).
 - **Off-topic refusal is 8/10, not 10/10** on the bundled set. The two misses
   land in `borderline`, where the model is instructed to verify — not in a
-  confident answer.
+  confident answer. On the larger 160-question eval set, 15/80 off-topic
+  questions reach the model (13 as `borderline`, 2 as confident `in_scope`) and
+  6/80 answerable ones are refused (`docs/eval-baseline.md`).
 - **Persistence is a JSON file rewritten per upload.** O(n²) bytes to ingest n
   documents, chosen so a reviewer can open and read the corpus. ~310 ms at 600
   documents. For thousands, swap in SQLite; `DocumentStore`'s interface would
   not change.
 - **The index is in-memory.** Single-process. Horizontal scaling would need a
   shared vector store.
+- **Non-Latin questions are refused.** The tokenizer is ASCII-only, so a
+  question in Chinese or Russian has no searchable terms. Measured: non-English
+  recall@6 is 0.27 and three non-English answerable questions are refused
+  (`docs/eval-baseline.md`). Fix planned for M3.
+- **Follow-up questions retrieve poorly.** Retrieval uses only the current
+  turn, so "What chapters does it cover?" after "When is Exam 1?" is often
+  refused: 7/15 follow-ups pass the gate. Fix planned for M3.
 
 ---
 
@@ -216,7 +227,7 @@ All optional; every value has a working default.
 | `LEXICAL_WEIGHT` | `1.0` | Set `0` to disable BM25 |
 | `DENSE_WEIGHT` | `1.0` | Set `0` to disable vectors |
 | `RELEVANCE_FLOOR` | `0.40` | Below this, refuse |
-| `DENSE_RESCUE_FLOOR` | `0.25` | `1.0` disables rescue |
+| `DENSE_RESCUE_FLOOR` | `0.36` | `1.0` disables rescue |
 | `TOP_K` | `6` | Passages per answer |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Characters |
 | `DATA_DIR` | `./data` | Corpus location |
@@ -242,11 +253,15 @@ app/
     chunking.py        Boundary-aware splitting
     extract.py         PDF / DOCX / CSV / JSON / MD / TXT
     persona.py         Who the bot is and what it covers
+examples/
+  course_ta/ customer_care/   The two bundled demo corpora
+  public_domain/              Constitution, Faraday, Darwin (eval corpora)
 web/                   Vanilla JS UI, no build step
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
-tests/                 267 offline tests
+eval/                  Offline/live eval harness + labelled datasets
+tests/                 437 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing
@@ -254,7 +269,14 @@ tests/                 267 offline tests
 ```bash
 pytest                 # everything, offline, no key
 pytest -q --tb=short
+python -m eval.run --offline                  # metrics table, free
+python -m eval.run --offline --check-baseline # the CI regression gate
 ```
+
+`tests/test_invariants.py` pins the scope-gate guarantees (filter before score,
+zero-token refusals, monotonic floor, injection handling, ...) listed in
+`docs/roadmap/notebooklm-parity.md`. CI also fails if any offline eval metric
+regresses more than 2 points from `eval/baseline.json`.
 
 The LLM is stubbed throughout; CI sets no API key. Frontend markdown-escaping
 and scroll behaviour are tested through Node harnesses when `node` is
@@ -269,4 +291,5 @@ which did lexical-only retrieval over a flat corpus.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE). Derivative works
+must also be distributed under GPL-3.0 with source available.

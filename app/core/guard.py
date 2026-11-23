@@ -89,9 +89,14 @@ CONFIDENT_RELEVANCE = 0.50
 #     in-scope questions    min 0.115  median 0.195  max 0.361
 #     off-topic questions   min 0.038  median 0.124  max 0.206
 #
-# The distributions overlap, so no threshold separates them cleanly. 0.25 sits
-# just above the off-topic maximum: it admits the strongest paraphrase cases
-# while refusing every off-topic question in the sample. Note that rescue only
+# The distributions overlap, so no threshold separates them cleanly. The rule
+# is that the floor must sit above the off-topic maximum. 0.25 did, on that
+# 20-question sample. On the 160-question eval gate set (five corpora, three of
+# them long public-domain texts; scripts/measure_rescue.py) the off-topic
+# maximum is 0.356, and 0.25 rescued 5 off-topic questions and 0 answerable
+# ones. 0.36 restores the rule: false accepts 0.250 -> 0.188, false refusals
+# unchanged at 0.075. Raising the floor can only answer fewer questions.
+# Note that rescue only
 # promotes to BORDERLINE, where the model is explicitly instructed to verify
 # the context — so a false accept here costs one guarded LLM call, not a wrong
 # answer.
@@ -101,7 +106,7 @@ CONFIDENT_RELEVANCE = 0.50
 # overlap rather than meaning. A sentence-transformers backend spreads them
 # much wider and wants a substantially higher floor (~0.5); re-run the script
 # after switching backends. Set DENSE_RESCUE_FLOOR=1.0 to disable rescue.
-DENSE_RESCUE_FLOOR = 0.25
+DENSE_RESCUE_FLOOR = 0.36
 
 
 class ScopeDecision:

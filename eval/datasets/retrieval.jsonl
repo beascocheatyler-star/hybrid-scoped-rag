@@ -1,0 +1,77 @@
+{"notebook": "syllabus", "question": "Who is the instructor?", "relevant_spans": ["Dr. A. Reyes"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "When are office hours?", "relevant_spans": ["Tuesday & Thursday 1:00–3:00 PM"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Where is the lecture held?", "relevant_spans": ["Derrick Hall 227"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What room is the lab in?", "relevant_spans": ["Comal 118"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What are the prerequisites?", "relevant_spans": ["MATH 1315"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Which programming language does the course use?", "relevant_spans": ["programming using C++"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What textbook is required?", "relevant_spans": ["Starting Out with C++"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How much does the zyBooks subscription cost?", "relevant_spans": ["UNIVCS1428Spring2026"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How much are programming assignments worth?", "relevant_spans": ["Programming assignments (8) | 35%"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What percentage is the final exam worth?", "relevant_spans": ["Final exam (cumulative) | 20%"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Are grades curved or rounded?", "relevant_spans": ["not** curved"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What score do I need on the final to pass the course?", "relevant_spans": ["at least 60% to pass the course"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "When are programming assignments due?", "relevant_spans": ["following Friday at"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How should I name my submission file?", "relevant_spans": ["lastname_firstname_hwN.cpp"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How is correctness weighted in assignment grading?", "relevant_spans": ["Correctness (70%)"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What happens if my program does not compile?", "relevant_spans": ["does not compile receives a maximum of 40%"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What is the late work penalty?", "relevant_spans": ["10 percentage points per calendar day"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How many late days do I get?", "relevant_spans": ["three late days"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Are the lowest lab scores dropped?", "relevant_spans": ["two lowest lab scores are dropped"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "When is Exam 1?", "relevant_spans": ["Wednesday, February 18"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What chapters does Exam 2 cover?", "relevant_spans": ["Covers chapters 6–9"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "When is the final exam scheduled?", "relevant_spans": ["Monday, May 11, 8:00–10:30 AM", "Final exam, 8:00–10:30 AM"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Can I bring a reference sheet to the exam?", "relevant_spans": ["single-page handwritten reference sheet"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What happens if I miss an exam?", "relevant_spans": ["makeup exam is granted only"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How soon must I notify the instructor about a missed exam?", "relevant_spans": ["within\n48 hours", "48 hours"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Is lab attendance required?", "relevant_spans": ["attendance is required"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How much does an unexcused lab absence cost?", "relevant_spans": ["2 percentage points"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Can I use AI tools on my homework?", "relevant_spans": ["Use of AI coding assistants"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What tool checks code similarity?", "relevant_spans": ["MOSS"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "What is the penalty for a second academic integrity violation?", "relevant_spans": ["F in the course"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Where is the CS Tutoring Center?", "relevant_spans": ["Comal 140"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "How do I request disability accommodations?", "relevant_spans": ["Office of Disability Services"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "When is spring break?", "relevant_spans": ["Spring Break — no class"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Which week covers file I/O?", "relevant_spans": ["Apr 14–18 | File I/O"], "kind": "lexical"}
+{"notebook": "support", "question": "How long do I have to return an item?", "relevant_spans": ["within **45 days**"], "kind": "lexical"}
+{"notebook": "support", "question": "Are final sale items returnable?", "relevant_spans": ["Final sale items"], "kind": "lexical"}
+{"notebook": "support", "question": "Can I return worn footwear?", "relevant_spans": ["Worn footwear"], "kind": "lexical"}
+{"notebook": "support", "question": "How do I start a return?", "relevant_spans": ["Orders → Return an item"], "kind": "lexical"}
+{"notebook": "support", "question": "When do return labels expire?", "relevant_spans": ["Return labels expire 14 days"], "kind": "lexical"}
+{"notebook": "support", "question": "When will my refund post?", "relevant_spans": ["within **3 business days**"], "kind": "lexical"}
+{"notebook": "support", "question": "Who pays for return shipping?", "relevant_spans": ["Who pays return shipping"], "kind": "lexical"}
+{"notebook": "support", "question": "How do exchanges work?", "relevant_spans": ["Direct exchanges are available"], "kind": "lexical"}
+{"notebook": "support", "question": "How much is expedited shipping?", "relevant_spans": ["$14.95"], "kind": "lexical"}
+{"notebook": "support", "question": "How much is overnight shipping?", "relevant_spans": ["$29.95"], "kind": "lexical"}
+{"notebook": "support", "question": "Is standard shipping free?", "relevant_spans": ["Free on orders over $75"], "kind": "lexical"}
+{"notebook": "support", "question": "What is the order cutoff time?", "relevant_spans": ["2:00 PM Central Time"], "kind": "lexical"}
+{"notebook": "support", "question": "Do you ship internationally?", "relevant_spans": ["do not currently ship internationally"], "kind": "lexical"}
+{"notebook": "support", "question": "Can I cancel my order?", "relevant_spans": ["within **60 minutes**"], "kind": "lexical"}
+{"notebook": "support", "question": "When is a package considered lost?", "relevant_spans": ["7 consecutive"], "kind": "lexical"}
+{"notebook": "support", "question": "How long is the warranty?", "relevant_spans": ["2-year limited warranty"], "kind": "lexical"}
+{"notebook": "support", "question": "What does the warranty cover?", "relevant_spans": ["The warranty covers"], "kind": "lexical"}
+{"notebook": "support", "question": "Does the warranty cover animal damage?", "relevant_spans": ["animal damage"], "kind": "lexical"}
+{"notebook": "support", "question": "How do I file a warranty claim?", "relevant_spans": ["Support → Warranty claim"], "kind": "lexical"}
+{"notebook": "support", "question": "What payment methods do you accept?", "relevant_spans": ["We accept Visa"], "kind": "lexical"}
+{"notebook": "support", "question": "Do gift cards expire?", "relevant_spans": ["Gift cards never expire"], "kind": "lexical"}
+{"notebook": "support", "question": "How do I escalate an issue?", "relevant_spans": ["Tier 2 specialist"], "kind": "lexical"}
+{"notebook": "syllabus", "question": "Who teaches this class?", "relevant_spans": ["Dr. A. Reyes"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "What do I need to have taken before enrolling?", "relevant_spans": ["MATH 1315"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "Is the last test comprehensive?", "relevant_spans": ["Cumulative", "Final exam (cumulative)"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "What if my code won't build?", "relevant_spans": ["does not compile receives a maximum of 40%"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "Is ChatGPT allowed?", "relevant_spans": ["Use of AI coding assistants"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "What happens if I'm caught cheating?", "relevant_spans": ["A first\nviolation", "report to the Dean"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "Is there a week off in March?", "relevant_spans": ["Spring Break — no class"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "Where can I get free tutoring?", "relevant_spans": ["Comal 140"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "Will I fail if I bomb the last test?", "relevant_spans": ["at least 60% to pass the course"], "kind": "paraphrase"}
+{"notebook": "support", "question": "Can I send back shoes I already wore?", "relevant_spans": ["Worn footwear"], "kind": "paraphrase"}
+{"notebook": "support", "question": "How fast do I get my money back?", "relevant_spans": ["within **3 business days**"], "kind": "paraphrase"}
+{"notebook": "support", "question": "My parcel never showed up.", "relevant_spans": ["considered lost"], "kind": "paraphrase"}
+{"notebook": "support", "question": "My jacket zipper broke, is that covered?", "relevant_spans": ["zipper and hardware failure"], "kind": "paraphrase"}
+{"notebook": "support", "question": "Can you deliver to Canada?", "relevant_spans": ["do not currently ship internationally"], "kind": "paraphrase"}
+{"notebook": "support", "question": "I want a different size of the same thing.", "relevant_spans": ["Direct exchanges are available"], "kind": "paraphrase"}
+{"notebook": "syllabus", "question": "¿Cuándo es el examen final?", "relevant_spans": ["Monday, May 11, 8:00–10:30 AM", "Final exam, 8:00–10:30 AM"], "kind": "non_english"}
+{"notebook": "syllabus", "question": "¿Quién es el profesor del curso?", "relevant_spans": ["Dr. A. Reyes"], "kind": "non_english"}
+{"notebook": "syllabus", "question": "期末考试是什么时候？", "relevant_spans": ["Monday, May 11, 8:00–10:30 AM", "Final exam, 8:00–10:30 AM"], "kind": "non_english"}
+{"notebook": "support", "question": "¿Cuánto cuesta el envío exprés?", "relevant_spans": ["$14.95"], "kind": "non_english"}
+{"notebook": "support", "question": "Как вернуть товар?", "relevant_spans": ["Orders → Return an item"], "kind": "non_english"}
+{"notebook": "support", "question": "保修期多长？", "relevant_spans": ["2-year limited warranty"], "kind": "non_english"}

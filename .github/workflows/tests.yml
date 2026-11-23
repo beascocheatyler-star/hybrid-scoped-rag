@@ -36,3 +36,8 @@ jobs:
       # test run costs nothing and needs no secret.
       - name: Run tests
         run: pytest -v
+
+      # Offline eval: stub LLM, no key. Fails on >2-point regression vs
+      # eval/baseline.json or any injection-resistance failure.
+      - name: Offline eval regression gate
+        run: python -m eval.run --offline --check-baseline

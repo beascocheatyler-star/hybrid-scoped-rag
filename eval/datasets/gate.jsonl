@@ -1,0 +1,80 @@
+{"notebook": "syllabus", "scope": null, "question": "How is the final grade calculated?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What is the late work policy?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "When are office hours?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What happens if I miss an exam?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "How much does the zyBooks subscription cost?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "When is the final exam scheduled?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "Can I use AI tools on my homework?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What happens if my program does not compile?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "How many late days do I get?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "Are lab absences penalized?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What is the attendance policy for lab?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "Is the final exam cumulative?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "How are programming assignments graded?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "When is Exam 1?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What is the academic integrity policy?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "Who teaches this class?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "Is ChatGPT allowed?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "Where can I get free tutoring?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What room is the lab in?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "When is spring break?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "How long do I have to return an item?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "How much is expedited shipping?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "Can I cancel my order?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "What does the warranty cover?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "When will my refund post?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "Do you ship internationally?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "What payment methods do you accept?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "My package tracking has not updated in a week.", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "Are final sale items returnable?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "Who pays for return shipping?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "How do I file a warranty claim?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "Do gift cards expire?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "How do I escalate an issue?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "Can I send back shoes I already wore?", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "My jacket zipper broke, is that covered?", "expected": "answer"}
+{"notebook": "both", "scope": {"course": "cs1428"}, "question": "When is the final exam?", "expected": "answer"}
+{"notebook": "both", "scope": {"dept": "support"}, "question": "How much is overnight shipping?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "¿Cuándo es el examen final?", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "期末考试是什么时候？", "expected": "answer"}
+{"notebook": "support", "scope": null, "question": "保修期多长？", "expected": "answer"}
+{"notebook": "syllabus", "scope": null, "question": "What is the capital of France?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Write me a Python script that scrapes Twitter.", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Who won the World Series in 2019?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Give me a recipe for lasagna.", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Explain quantum entanglement.", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Should I buy Tesla stock?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Tell me a joke about horses.", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Can I return these boots?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "How much is overnight shipping?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "What is your warranty on jackets?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Help me write a cover letter.", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "What time does the Super Bowl start?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "What are the symptoms of appendicitis?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Who directed Inception?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "How do I bake sourdough bread?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "What is the boiling point of water?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Translate good morning into Japanese.", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "Final Fantasy release date", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "What is the best lab coat for chemistry?", "expected": "refuse"}
+{"notebook": "syllabus", "scope": null, "question": "When does the next Marvel movie come out?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "What is the capital of France?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Help me write a cover letter.", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Who is the president of Brazil?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Explain the Pythagorean theorem.", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "What time does the Super Bowl start?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "When is the final exam?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "What chapters does Exam 1 cover?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Who is the course instructor?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "How do I bake sourdough?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Tell me about the return of the king.", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "What is the shipping container trade with China?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "How do I file my taxes?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "What is a gift of the Magi?", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Write a poem about the ocean.", "expected": "refuse"}
+{"notebook": "support", "scope": null, "question": "Who invented the zipper?", "expected": "refuse"}
+{"notebook": "both", "scope": {"course": "cs1428"}, "question": "How much is overnight shipping?", "expected": "refuse"}
+{"notebook": "both", "scope": {"dept": "support"}, "question": "When is the final exam?", "expected": "refuse"}
+{"notebook": "both", "scope": {"course": "cs1428"}, "question": "Do gift cards expire?", "expected": "refuse"}
+{"notebook": "both", "scope": {"dept": "support"}, "question": "Is ChatGPT allowed on homework?", "expected": "refuse"}
+{"notebook": "both", "scope": {"no_such_key": "x"}, "question": "When is the final exam?", "expected": "refuse"}

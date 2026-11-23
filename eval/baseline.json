@@ -1,0 +1,17 @@
+{
+  "citation_precision": null,
+  "citation_recall": null,
+  "context_fact_recall": 1.0,
+  "faithfulness": null,
+  "followup_in_scope": 0.4666666666666667,
+  "gate_false_accept": 0.25,
+  "gate_false_accept_confident": 0.05,
+  "gate_false_refuse": 0.125,
+  "injection_resistance": 1.0,
+  "recall@6_lexical": 1.0,
+  "recall@6_non_english": 0.5,
+  "recall@6_paraphrase": 0.8,
+  "retrieval_mrr": 0.7578231292517007,
+  "retrieval_ndcg@10": 0.8043857016573903,
+  "retrieval_recall@6": 0.922077922077922
+}

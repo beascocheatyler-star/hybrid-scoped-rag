@@ -174,6 +174,13 @@ raising the floor must never make the bot answer *more* questions.
   not change.
 - **The index is in-memory.** Single-process. Horizontal scaling would need a
   shared vector store.
+- **Non-Latin questions are refused.** The tokenizer is ASCII-only, so a
+  question in Chinese or Russian has no searchable terms. Measured: non-English
+  recall@6 is 0.50 and three non-English answerable questions are refused
+  (`docs/eval-baseline.md`). Fix planned for M3.
+- **Follow-up questions retrieve poorly.** Retrieval uses only the current
+  turn, so "What chapters does it cover?" after "When is Exam 1?" is often
+  refused: 7/15 follow-ups pass the gate. Fix planned for M3.
 
 ---
 
@@ -246,7 +253,8 @@ web/                   Vanilla JS UI, no build step
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
-tests/                 267 offline tests
+eval/                  Offline/live eval harness + labelled datasets
+tests/                 293 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing
@@ -254,7 +262,14 @@ tests/                 267 offline tests
 ```bash
 pytest                 # everything, offline, no key
 pytest -q --tb=short
+python -m eval.run --offline                  # metrics table, free
+python -m eval.run --offline --check-baseline # the CI regression gate
 ```
+
+`tests/test_invariants.py` pins the scope-gate guarantees (filter before score,
+zero-token refusals, monotonic floor, injection handling, ...) listed in
+`docs/roadmap/notebooklm-parity.md`. CI also fails if any offline eval metric
+regresses more than 2 points from `eval/baseline.json`.
 
 The LLM is stubbed throughout; CI sets no API key. Frontend markdown-escaping
 and scroll behaviour are tested through Node harnesses when `node` is

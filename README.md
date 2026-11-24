@@ -19,7 +19,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 267 tests, all offline
+pytest                            # 481 tests, all offline
 python run.py                     # web UI at http://localhost:8000
 ```
 
@@ -172,12 +172,16 @@ raising the floor must never make the bot answer *more* questions.
   confident answer. On the larger 160-question eval set, 15/80 off-topic
   questions reach the model (13 as `borderline`, 2 as confident `in_scope`) and
   6/80 answerable ones are refused (`docs/eval-baseline.md`).
-- **Persistence is a JSON file rewritten per upload.** O(n²) bytes to ingest n
-  documents, chosen so a reviewer can open and read the corpus. ~310 ms at 600
-  documents. For thousands, swap in SQLite; `DocumentStore`'s interface would
-  not change.
-- **The index is in-memory.** Single-process. Horizontal scaling would need a
-  shared vector store.
+- **The index is in-memory, one per notebook, single-process.** Storage is
+  SQLite (WAL), and each notebook's hybrid index is rebuilt from it lazily.
+  Running several uvicorn workers over one `DATA_DIR` would give each worker
+  its own index, which goes stale when another worker writes. Use one worker.
+- **Search is pure-Python cosine.** Fine for a few thousand chunks; measured
+  p95 is 285 ms at 10k chunks (`scripts/bench.py search`). NumPy vectorisation
+  is planned for M3, with a target of p95 under 150 ms at 100k chunks.
+- **Imported legacy sources have no original file.** The pre-M1 JSON store
+  never kept uploads, so documents migrated from `corpus.json` can be
+  searched and cited, but `GET .../file` returns 404 for them.
 - **Non-Latin questions are refused.** The tokenizer is ASCII-only, so a
   question in Chinese or Russian has no searchable terms. Measured: non-English
   recall@6 is 0.27 and three non-English answerable questions are refused
@@ -200,6 +204,28 @@ raising the floor must never make the bot answer *more* questions.
 | `POST` | `/api/search` | **Retrieval only — no LLM, no key** |
 | `POST` | `/api/chat` | Ask a scoped question |
 | `GET` | `/api/status` | Config, corpus stats, facets |
+
+The table above is the v1 API. It operates on the **Default notebook** and is
+unchanged for existing clients. The v2 API (M1) addresses any notebook:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` `POST` | `/api/v2/notebooks` | List / create notebooks |
+| `GET` `PATCH` `DELETE` | `/api/v2/notebooks/{nb}` | Read / rename / delete |
+| `POST` | `/api/v2/notebooks/{nb}/copy` | Copy sources into a new notebook |
+| `POST` | `/api/v2/notebooks/{nb}/sources` | Add files (multipart) or `{"kind":"text"}`; returns job ids (`?wait=true` blocks) |
+| `GET` | `/api/v2/notebooks/{nb}/sources[/{id}]` | Sources with status (`queued`, `processing`, `ready`, `failed`) |
+| `GET` | `/api/v2/notebooks/{nb}/sources/{id}/content` | Extracted text |
+| `GET` | `/api/v2/notebooks/{nb}/sources/{id}/file` | The original upload |
+| `PATCH` `DELETE` | `/api/v2/notebooks/{nb}/sources/{id}` | Rename / re-tag / remove |
+| `GET` | `/api/v2/notebooks/{nb}/facets` | Metadata facets for this notebook |
+| `POST` | `/api/v2/notebooks/{nb}/search` | **Retrieval + gate decision, no LLM, no key** |
+| `GET` / `POST` | `/api/v2/jobs/{id}` / `.../cancel` | Job status / cancel |
+
+Notebooks are isolated by construction: each has its own index, so IDF,
+coverage, facets and duplicate detection never see another notebook. On first
+boot, an existing `data/corpus.json` is imported into the Default notebook and
+the original files are kept in `data/legacy-backup-<timestamp>/`.
 
 `/api/search` exists so retrieval can be graded on its own terms, exposing the
 per-retriever ranks RRF fused and the decision the gate would reach:
@@ -230,7 +256,10 @@ All optional; every value has a working default.
 | `DENSE_RESCUE_FLOOR` | `0.36` | `1.0` disables rescue |
 | `TOP_K` | `6` | Passages per answer |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Characters |
-| `DATA_DIR` | `./data` | Corpus location |
+| `DATA_DIR` | `./data` | SQLite database (`hsr.sqlite3`) and stored originals |
+| `JOB_WORKERS` | `2` | Background ingestion threads |
+| `MAX_SOURCES_PER_NOTEBOOK` | `50` | Per notebook (the v1 Default notebook is unlimited) |
+| `SINGLE_USER_MODE` | `true` | No login; everything belongs to the local user |
 
 Setting `LEXICAL_WEIGHT=0` or `DENSE_WEIGHT=0` isolates either retriever, which
 is how `measure_hybrid.py` attributes the contribution of each.
@@ -242,14 +271,21 @@ is how `measure_hybrid.py` attributes the contribution of each.
 ```
 app/
   config.py            Environment-driven settings
-  main.py              FastAPI routes
+  main.py              FastAPI routes (v1, on the Default notebook)
+  api_v2.py            /api/v2: notebooks, sources, search, jobs
+  migrations/          001_initial.sql, ...
   schemas.py           Request/response models
   core/
     embedding.py       Pluggable embedders (hashing | sentence-transformers)
     retrieval.py       HybridIndex: BM25 + dense + RRF
     metadata.py        ScopeFilter parsing and matching
     guard.py           The two-layer scope gate
-    store.py           Ingest, tag, persist, reload
+    db.py              SQLite connection + numbered-SQL migration runner
+    notebooks.py       NotebookStore (per-notebook index) + NotebookRegistry
+    jobs.py            Durable background jobs (thread pool + jobs table)
+    importer.py        One-time corpus.json -> Default notebook import
+    services.py        Wires db, notebooks, import and jobs together
+    store.py           Legacy JSON store (kept for import and its tests)
     chunking.py        Boundary-aware splitting
     extract.py         PDF / DOCX / CSV / JSON / MD / TXT
     persona.py         Who the bot is and what it covers

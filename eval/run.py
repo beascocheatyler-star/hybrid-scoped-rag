@@ -63,30 +63,36 @@ def load(name: str) -> List[Dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def build_notebooks() -> Dict[str, DocumentStore]:
+def build_notebooks() -> Dict[str, "NotebookStore"]:
+    """One SQLite notebook per eval corpus, through the production storage
+    path (NotebookRegistry), in a throwaway data directory."""
+    from app.core.embedding import get_embedder
+    from app.core.services import build_services
+
     syl = (EX / "course_ta" / "cs1428_syllabus.md").read_bytes()
     sup = (EX / "customer_care" / "returns_and_shipping.md").read_bytes()
-
-    def mk(docs):
-        s = DocumentStore(data_dir=Path(tempfile.mkdtemp(prefix="hsr-eval-")))
-        for name, data, meta in docs:
-            s.add(name, data, metadata=meta)
-        return s
-
     pd = EX / "public_domain"
-    return {
-        "constitution": mk([("us_constitution.md", (pd / "us_constitution.md").read_bytes(), None)]),
-        "faraday": mk([("faraday_candle_lecture1.md", (pd / "faraday_candle_lecture1.md").read_bytes(), None)]),
-        "darwin": mk([("darwin_origin_ch3.md", (pd / "darwin_origin_ch3.md").read_bytes(), None)]),
-        "syllabus": mk([("cs1428_syllabus.md", syl, None)]),
-        "support": mk([("returns_and_shipping.md", sup, None)]),
-        "both": mk(
-            [
-                ("cs1428_syllabus.md", syl, {"course": "cs1428"}),
-                ("returns_and_shipping.md", sup, {"dept": "support"}),
-            ]
-        ),
+
+    settings = Settings()
+    settings.data_dir = Path(tempfile.mkdtemp(prefix="hsr-eval-"))
+    svc = build_services(settings, get_embedder(settings.embedding_backend,
+                                                settings.embedding_dimensions))
+    spec = {
+        "constitution": [("us_constitution.md", (pd / "us_constitution.md").read_bytes(), None)],
+        "faraday": [("faraday_candle_lecture1.md", (pd / "faraday_candle_lecture1.md").read_bytes(), None)],
+        "darwin": [("darwin_origin_ch3.md", (pd / "darwin_origin_ch3.md").read_bytes(), None)],
+        "syllabus": [("cs1428_syllabus.md", syl, None)],
+        "support": [("returns_and_shipping.md", sup, None)],
+        "both": [("cs1428_syllabus.md", syl, {"course": "cs1428"}),
+                 ("returns_and_shipping.md", sup, {"dept": "support"})],
     }
+    out = {}
+    for name, docs in spec.items():
+        st = svc.registry.store(svc.registry.create(name).id)
+        for fname, data, meta in docs:
+            st.add(fname, data, metadata=meta)
+        out[name] = st
+    return out
 
 
 def _settings() -> Settings:

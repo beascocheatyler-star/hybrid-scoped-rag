@@ -166,8 +166,37 @@ in-scope questions    min 0.115  median 0.195  max 0.361
 off-topic questions   min 0.038  median 0.124  max 0.206
 ```
 
-The distributions overlap, so no threshold separates them cleanly. The default
-`0.25` sits just above the off-topic maximum.
+The distributions overlap, so no threshold separates them cleanly. `0.25` sat
+just above the off-topic maximum *on this 20-question sample*.
+
+### Re-calibration on the eval gate set (M0)
+
+`python scripts/measure_rescue.py` sweeps the floor over
+`eval/datasets/gate.jsonl`: 80 answerable and 80 off-topic questions across
+five corpora, including three long public-domain texts (US Constitution,
+Faraday's candle lecture, Darwin ch. III). Long documents produce higher
+hashing similarities for unrelated questions, so the old floor stopped
+satisfying its own rule:
+
+```
+in-scope  dense: min 0.000  median 0.239  max 0.423
+off-topic dense: min 0.000  median 0.162  max 0.356
+
+rescue_floor   FA     FR    rescued off-topic  rescued in-scope
+    0.25     0.250  0.075          5                  0
+    0.30     0.212  0.075          2                  0
+    0.36     0.188  0.075          0                  0
+    1.00     0.188  0.075          0                  0
+```
+
+At 0.25, rescue admitted five off-topic questions ("What are the rules of
+chess?" against Darwin, "Who is the current President of France?" against the
+Constitution, ...) and no answerable one. **The default is now 0.36.** It cuts
+false accepts from 25.0% to 18.8% with no change in false refusals. Per the
+roadmap rule, when safety and recall trade off, safety wins; here nothing was
+traded. With hashing on this set, rescue currently does no measurable good at
+any floor that keeps false accepts down. It stays enabled because it is the
+hook a semantic embedder (M3) needs, and M3 re-calibrates per embedder.
 
 **Re-run this after changing `EMBEDDING_BACKEND`.** The hashing embedder
 compresses similarities into a narrow band because it measures character-n-gram
@@ -205,3 +234,38 @@ score runs on *every* question to power the gate, that cost is paid constantly
 
 A practical mitigation that needs no code change: include a glossary or FAQ in
 the uploaded corpus. It supplies the vocabulary users actually ask in.
+
+
+---
+
+## M3: the gate reads the strongest lexical hit; floor 0.40 → 0.42
+
+Before M3 the gate scored `hits[0]`, the *fused* rank-1 hit. When RRF put a
+dense-only chunk first, its BM25 factor was 0 and relevance collapsed even if
+a lexically strong chunk sat at rank 2. The gate now reads the hit with the
+highest normalized BM25 among the top-k. That is the correct measurement, but
+it can only raise relevance, so at the old floor it answered more. Measured on
+the 160-question gate set (`python scripts/measure_gate.py`):
+
+```
+floor   FA      FAconf  FR
+0.40    0.237   0.025   0.037
+0.42    0.175   0.025   0.062   <- new default
+0.44    0.138   0.025   0.125
+0.46    0.062   0.025   0.150
+```
+
+M0 baseline: FA 0.188, FR 0.075. **0.42 is the only swept floor where both
+error rates are below the baseline**, so it is the default. Raising the floor
+can only shrink the answered set (I6).
+
+## Per-embedder calibration
+
+`scripts/measure_gate.py --write` stores `(embedder_signature,
+relevance_floor, dense_rescue_floor)` in the `calibrations` table. At boot the
+app uses, in order: the environment variable, then the calibration row for
+the active embedder, then the default. A non-hashing embedder with no row runs
+with dense rescue disabled. Measured for `BAAI/bge-small-en-v1.5`: off-topic
+questions reach dense 0.635; at the hashing floor 0.36 rescue would admit
+64 of 80 off-topic questions. The calibrated floor is 0.70 (FA 0.163,
+FR 0.050).

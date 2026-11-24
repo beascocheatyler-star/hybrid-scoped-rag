@@ -38,6 +38,7 @@ from __future__ import annotations
 import math
 import re
 import threading
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -77,13 +78,61 @@ _B = 0.75
 # measurable — see scripts/measure_hybrid.py.
 RRF_K_DEFAULT = 60
 
+# NumPy is optional: with it, dense scoring is one matrix-vector product per
+# query; without it, the pure-Python loop below. Small candidate sets stay on
+# the loop, where NumPy's per-call overhead is not worth paying.
+try:  # pragma: no cover - depends on install
+    import numpy as _np
+except ImportError:  # pragma: no cover
+    _np = None
+_NUMPY_MIN = 2000
+
+
+STOPWORDS = _STOPWORDS
+
+# Unicode tokenizer (M3). For ASCII input this is exactly the old
+# ``[a-z0-9][a-z0-9'_-]*`` behaviour: a token starts with a letter or digit
+# and may continue with letters, digits, apostrophes, underscores and hyphens.
+# Beyond ASCII, \w covers every script, so Cyrillic, Greek, Arabic, Devanagari
+# and accented Latin tokenize as words instead of vanishing (the old tokenizer
+# turned "¿Cuándo?" into "cu" + "ndo" and Chinese into nothing at all).
+#
+# Scripts written without spaces (Han, Hiragana, Katakana, Hangul runs) would
+# otherwise become one giant "word" per sentence. They are split into
+# overlapping character bigrams, the standard dictionary-free approach for
+# CJK retrieval; a lone character is kept as a unigram.
+_UTOKEN_RE = re.compile(r"[^\W_][\w'-]*", re.UNICODE)
+_CJK_RUN = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+")
+
+
+def _expand(token: str) -> List[str]:
+    if not _CJK_RUN.search(token):
+        return [token]
+    out: List[str] = []
+    pos = 0
+    for m in _CJK_RUN.finditer(token):
+        if m.start() > pos:
+            out.append(token[pos:m.start()])
+        run = m.group(0)
+        out.extend([run] if len(run) == 1 else [run[i:i + 2] for i in range(len(run) - 1)])
+        pos = m.end()
+    if pos < len(token):
+        out.append(token[pos:])
+    return [t for t in out if t.strip("'-_")]
+
 
 def tokenize(text: str, keep_stopwords: bool = False) -> List[str]:
-    """Lowercase, strip punctuation, drop stopwords and 1-character noise."""
-    tokens = _TOKEN_RE.findall(text.lower())
+    """NFKC-normalise, lowercase, split into word tokens (CJK as bigrams),
+    drop stopwords and 1-character noise (CJK single characters are kept)."""
+    norm = unicodedata.normalize("NFKC", text).lower()
+    if norm.isascii():
+        tokens = _TOKEN_RE.findall(norm)  # fast path, identical to before
+    else:
+        tokens = [t for raw in _UTOKEN_RE.findall(norm) for t in _expand(raw)]
     if keep_stopwords:
         return tokens
-    return [t for t in tokens if t not in _STOPWORDS and len(t) > 1]
+    return [t for t in tokens
+            if t not in _STOPWORDS and (len(t) > 1 or _CJK_RUN.match(t))]
 
 
 @dataclass
@@ -102,6 +151,15 @@ class Chunk:
     tokens: List[str] = field(default_factory=list, repr=False)
     term_freqs: Counter = field(default_factory=Counter, repr=False)
     embedding: Optional[List[float]] = field(default=None, repr=False)
+    # Anchors into the source's stored extracted text (M2). None for chunks
+    # from the legacy JSON store, which never recorded positions.
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
+    page: Optional[int] = None
+    slide: Optional[int] = None
+    t_start_ms: Optional[int] = None
+    t_end_ms: Optional[int] = None
+    section_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.tokens:
@@ -162,6 +220,17 @@ class HybridIndex:
     ):
         self._lock = threading.RLock()
         self._chunks: List[Chunk] = []
+        self._matrix = None
+        self._row_of: Dict[int, int] = {}
+        # Inverted index: term -> chunks containing it. BM25 and coverage then
+        # touch only chunks that share a term with the query, instead of
+        # scanning the whole notebook (identical results, sublinear cost).
+        self._postings: Dict[str, List[Chunk]] = {}
+        # Insertion sequence per chunk, so postings-based scoring visits chunks
+        # in the same order as the old full scan (identical tie-breaking).
+        self._seq: Dict[int, int] = {}
+        self._next_seq = 0
+        self._cand_ids = None
         self._doc_freqs: Counter = Counter()
         self._total_length = 0
         self.embedder = embedder
@@ -210,7 +279,12 @@ class HybridIndex:
                 chunk.embedding = vector
 
         with self._lock:
+            self._matrix = None
             for chunk in chunks:
+                for term in chunk.term_freqs:
+                    self._postings.setdefault(term, []).append(chunk)
+                self._seq[id(chunk)] = self._next_seq
+                self._next_seq += 1
                 self._chunks.append(chunk)
                 self._total_length += chunk.length
                 for term in chunk.term_freqs:
@@ -220,11 +294,13 @@ class HybridIndex:
     def remove_document(self, doc_id: str) -> int:
         """Drop every chunk belonging to ``doc_id``. Returns the number removed."""
         with self._lock:
+            self._matrix = None
             keep: List[Chunk] = []
             removed = 0
             for chunk in self._chunks:
                 if chunk.doc_id == doc_id:
                     removed += 1
+                    self._seq.pop(id(chunk), None)
                     self._total_length -= chunk.length
                     for term in chunk.term_freqs:
                         self._doc_freqs[term] -= 1
@@ -233,6 +309,14 @@ class HybridIndex:
                 else:
                     keep.append(chunk)
             self._chunks = keep
+            if removed:
+                gone = doc_id
+                for term in list(self._postings):
+                    lst = [c for c in self._postings[term] if c.doc_id != gone]
+                    if lst:
+                        self._postings[term] = lst
+                    else:
+                        del self._postings[term]
             return removed
 
     def update_metadata(self, doc_id: str, metadata: Dict[str, str]) -> int:
@@ -247,6 +331,9 @@ class HybridIndex:
 
     def clear(self) -> None:
         with self._lock:
+            self._matrix = None
+            self._postings = {}
+            self._seq = {}
             self._chunks = []
             self._doc_freqs = Counter()
             self._total_length = 0
@@ -283,12 +370,14 @@ class HybridIndex:
         """
         if not terms:
             return 0.0
+        cand_ids = self._cand_ids
         present = 0
         for term in terms:
-            for chunk in candidates:
-                if term in chunk.term_freqs:
-                    present += 1
-                    break
+            posting = self._postings.get(term, ())
+            if cand_ids is None:
+                present += 1 if posting else 0
+            elif any(id(c) in cand_ids for c in posting):
+                present += 1
         return present / len(terms)
 
     def _lexical_ranking(
@@ -302,8 +391,21 @@ class HybridIndex:
         # matching chunk, used to calibrate into a comparable 0..1 range.
         max_possible = sum(idfs.values()) * (_K1 + 1)
 
+        # Only chunks that contain at least one query term can score > 0.
+        cand_ids = self._cand_ids
+        seen = set()
+        touched: List[Chunk] = []
+        for term in set(query_terms):
+            for c in self._postings.get(term, ()):
+                if id(c) not in seen and (cand_ids is None or id(c) in cand_ids):
+                    seen.add(id(c))
+                    touched.append(c)
+
+        seq = self._seq
+        touched.sort(key=lambda c: seq.get(id(c), 0))
+
         scored: List[Tuple[float, Chunk]] = []
-        for chunk in candidates:
+        for chunk in touched:
             score = 0.0
             for term in query_terms:
                 freq = chunk.term_freqs.get(term)
@@ -328,7 +430,7 @@ class HybridIndex:
         """Cosine similarity over the candidate set, best first."""
         if self.dense_weight <= 0.0:
             return []
-        query_vector = self.embedder.embed(query)
+        query_vector = self.embedder.embed_query(query)
         if not any(query_vector):
             return []
 
@@ -345,6 +447,104 @@ class HybridIndex:
 
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return scored
+
+    # --- vectorised path (NumPy) -----------------------------------------
+    #
+    # For large candidate sets, BM25 and cosine are computed with NumPy over
+    # arrays rebuilt lazily after any mutation. BM25 is accumulated term by
+    # term in the same operation order as the Python loop, so lexical scores
+    # are bit-identical; ties are broken by insertion order, as in the loop.
+    # Vectors are float32 (as stored), so dense scores can differ from the
+    # Python path by float rounding (~1e-7). tests/test_m3_retrieval.py pins
+    # the two paths against each other.
+
+    def _arrays(self):
+        with self._lock:
+            if self._matrix is None:
+                chunks = list(self._chunks)
+                dim = next((len(c.embedding) for c in chunks if c.embedding is not None), 0)
+                m = _np.zeros((len(chunks), dim), dtype=_np.float32)
+                for i, c in enumerate(chunks):
+                    if c.embedding is not None and len(c.embedding) == dim:
+                        m[i] = c.embedding
+                self._matrix = {
+                    "chunks": chunks,
+                    "row_of": {id(c): i for i, c in enumerate(chunks)},
+                    "lens": _np.fromiter((c.length for c in chunks), dtype=_np.float64,
+                                         count=len(chunks)),
+                    "m": m,
+                    "post": {},
+                }
+            return self._matrix
+
+    def _posting_arrays(self, arr, term):
+        cached = arr["post"].get(term)
+        if cached is None:
+            lst = self._postings.get(term, ())
+            row_of = arr["row_of"]
+            rows = _np.fromiter((row_of[id(c)] for c in lst), dtype=_np.int64, count=len(lst))
+            tfs = _np.fromiter((c.term_freqs[term] for c in lst), dtype=_np.float64, count=len(lst))
+            cached = arr["post"][term] = (rows, tfs)
+        return cached
+
+    def _vector_rankings(self, query_terms, query, candidates, n_docs, depth):
+        arr = self._arrays()
+        chunks, n = arr["chunks"], len(arr["chunks"])
+        if self._cand_ids is None:
+            mask = None
+        else:
+            mask = _np.zeros(n, dtype=bool)
+            row_of = arr["row_of"]
+            mask[[row_of[id(c)] for c in candidates if id(c) in row_of]] = True
+
+        # BM25
+        avg_len = self._total_length / n_docs if n_docs else 0.0
+        idfs = {t: self._idf(t, n_docs) for t in set(query_terms)}
+        max_possible = sum(idfs.values()) * (_K1 + 1)
+        scores = _np.zeros(n, dtype=_np.float64)
+        for term in query_terms:
+            idf = idfs[term]
+            if idf <= 0:
+                continue
+            rows, tfs = self._posting_arrays(arr, term)
+            if rows.size == 0:
+                continue
+            ratio = arr["lens"][rows] / avg_len if avg_len else 1.0
+            denom = tfs + _K1 * (1 - _B + _B * ratio)
+            scores[rows] += idf * (tfs * (_K1 + 1)) / denom
+        ok = scores > 0
+        if mask is not None:
+            ok &= mask
+        rows = _np.nonzero(ok)[0]
+        order = rows[_np.argsort(-scores[rows], kind="stable")][:depth]
+        lexical = [(float(scores[i]), chunks[i]) for i in order]
+
+        # Dense
+        dense: List[Tuple[float, Chunk]] = []
+        if self.dense_weight > 0.0 and arr["m"].size:
+            qv = self.embedder.embed_query(query)
+            if any(qv) and len(qv) == arr["m"].shape[1]:
+                sims = arr["m"] @ _np.asarray(qv, dtype=_np.float32)
+                ok = sims > 0
+                if mask is not None:
+                    ok &= mask
+                rows = _np.nonzero(ok)[0]
+                if rows.size > depth:
+                    part = rows[_np.argpartition(-sims[rows], depth)[:depth]]
+                else:
+                    part = rows
+                part = part[_np.lexsort((part, -sims[part]))]
+                dense = [(float(sims[i]), chunks[i]) for i in part]
+        return lexical, max_possible, dense
+
+    def term_present(self, term: str, scope: Optional[ScopeFilter] = None) -> bool:
+        """Does any chunk within ``scope`` contain this (tokenized) term?
+        Lexical only: dense similarity says nothing about vocabulary."""
+        with self._lock:
+            posting = self._postings.get(term, ())
+            if scope is None or scope.is_empty:
+                return bool(posting)
+            return any(scope.matches(c.doc_id, c.metadata) for c in posting)
 
     # --- query ---------------------------------------------------------
 
@@ -382,6 +582,7 @@ class HybridIndex:
 
             if effective_scope is None or effective_scope.is_empty:
                 candidates: List[Chunk] = list(self._chunks)
+                self._cand_ids = None
             else:
                 candidates = [
                     c
@@ -391,6 +592,8 @@ class HybridIndex:
 
             if not candidates:
                 return []
+            if effective_scope is not None and not effective_scope.is_empty:
+                self._cand_ids = {id(c) for c in candidates}
 
             # IDF uses the global corpus size. The alternative — recomputing
             # document frequencies over the filtered set — would make a term's
@@ -400,10 +603,14 @@ class HybridIndex:
             # which is what the calibrated gate threshold assumes.
             n_docs = len(self._chunks)
 
-            lexical, max_possible = self._lexical_ranking(
-                query_terms, candidates, n_docs
-            )
-            dense = self._dense_ranking(query, candidates)
+            if _np is not None and len(candidates) >= _NUMPY_MIN:
+                lexical, max_possible, dense = self._vector_rankings(
+                    query_terms, query, candidates, n_docs, depth)
+            else:
+                lexical, max_possible = self._lexical_ranking(
+                    query_terms, candidates, n_docs
+                )
+                dense = self._dense_ranking(query, candidates)
 
             fused = self._fuse(lexical[:depth], dense[:depth])
             top = fused[:top_k]

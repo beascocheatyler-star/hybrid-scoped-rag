@@ -56,7 +56,8 @@ def test_extract_rejects_empty_file():
 
 def test_extract_rejects_unsupported_extension():
     with pytest.raises(ExtractionError, match="Unsupported file type"):
-        extract("image.png", b"\x89PNG\r\n")
+        # M2 made images a supported source (OCR); .exe is still unsupported.
+        extract("tool.exe", b"MZ\x90\x00")
 
 
 def test_extract_rejects_whitespace_only_file():

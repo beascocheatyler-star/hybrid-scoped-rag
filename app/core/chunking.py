@@ -110,3 +110,58 @@ def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 200) -> List[st
         tail = chunks[i - 1][-overlap:].lstrip()
         overlapped.append("{}\n\n{}".format(tail, chunks[i]) if tail else chunks[i])
     return overlapped
+
+
+# --------------------------------------------------------------------------
+# Anchored chunking (M2)
+# --------------------------------------------------------------------------
+#
+# ``chunk_text`` re-joins its pieces with synthetic whitespace ("\n\n" between
+# units, " " between words, an overlap tail prepended), so its output cannot be
+# located in the source by plain substring search. ``chunk_spans`` keeps
+# ``chunk_text``'s exact chunking decisions (size, boundaries, overlap) and
+# locates each chunk in the ORIGINAL text by matching it with whitespace
+# ignored. Because every unit is a substring of the source and consecutive
+# units are separated only by whitespace, each chunk maps to one contiguous
+# span. The returned text is the source's own slice, so
+#
+#     text[span.start:span.end] == span.text
+#
+# and its words, hence its BM25 tokens, are identical to chunk_text's output:
+# anchoring does not change what retrieval sees. (Measured: every eval metric
+# is unchanged; see docs/design/M2.md.)
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass(frozen=True)
+class ChunkSpan:
+    start: int
+    end: int
+    text: str
+
+
+def chunk_spans(text: str, chunk_size: int = 1200, overlap: int = 200) -> List[ChunkSpan]:
+    pieces = chunk_text(text, chunk_size, overlap)
+    if not pieces:
+        return []
+    # Source with whitespace removed, plus a map back to original offsets.
+    offsets = [i for i, ch in enumerate(text) if not ch.isspace()]
+    dense = "".join(text[i] for i in offsets)
+    spans: List[ChunkSpan] = []
+    cursor = 0
+    for piece in pieces:
+        needle = "".join(piece.split())
+        if not needle:
+            continue
+        pos = dense.find(needle, cursor)
+        if pos < 0:  # should not happen; fall back to a global search
+            pos = dense.find(needle)
+        if pos < 0:
+            raise ValueError("chunk could not be anchored in the source text")
+        start, end = offsets[pos], offsets[pos + len(needle) - 1] + 1
+        spans.append(ChunkSpan(start, end, text[start:end]))
+        # The next chunk starts at or after this one (overlap goes backwards
+        # into this chunk, never before its start).
+        cursor = pos + 1
+    return spans

@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from app.config import Settings
+from app.core.llm import get_llm
+from app.core.query import QueryPlan, llm_rewriter, plan_query, select_context
 from app.core.guard import (
     ScopeDecision,
     ScopeResult,
@@ -73,6 +75,8 @@ class Answer:
     rescued_by_dense: bool = False
     scope_description: str = ""
     documents_in_scope: int = 0
+    retrieval_query: str = ""
+    rewrite: str = "none"
 
     def to_dict(self) -> Dict:
         return {
@@ -251,20 +255,8 @@ class ChatEngine:
         if scope is None and doc_ids:
             scope = ScopeFilter.parse(doc_ids=doc_ids)
 
-        matched = self.store.count_matching(scope)
-
-        hits = self.store.index.search(
-            question, top_k=self.settings.top_k, scope=scope
-        )
-        result = classify(
-            question=question,
-            hits=hits,
-            relevance_floor=self.settings.relevance_floor,
-            corpus_empty=self.store.is_empty,
-            scope=scope,
-            scope_matched_documents=matched,
-            dense_rescue_floor=self.settings.dense_rescue_floor,
-        )
+        plan = self.plan(question, history or [], scope)
+        result, matched = plan.result, plan.matched
 
         # Layer 1: deterministic refusal, no LLM call, no cost.
         if not result.allows_llm:
@@ -284,8 +276,30 @@ class ChatEngine:
                 documents_in_scope=matched,
             )
 
-        # Layer 2: grounded generation.
-        return self._generate(question, persona, result, history or [], matched)
+        # Layer 2: grounded generation. Context selection (multi-query,
+        # reranking, long-context) happens only now, after the gate.
+        if result.decision in (ScopeDecision.IN_SCOPE, ScopeDecision.BORDERLINE):
+            ctx = select_context(plan, self.store, self.settings, scope,
+                                 get_llm(self.settings, "rewrite") if self.settings.multi_query else None)
+            result.hits = ctx
+        answer = self._generate(question, persona, result, history or [], matched)
+        answer.retrieval_query = plan.retrieval_query
+        answer.rewrite = plan.rewrite
+        return answer
+
+    def plan(self, question: str, history: List[Dict[str, str]],
+             scope: Optional[ScopeFilter]) -> QueryPlan:
+        """Deterministic retrieval + gate, including follow-up condensation."""
+        rewriter = None
+        if self.settings.query_rewrite == "llm":
+            llm = get_llm(self.settings, "rewrite")
+            rewriter = llm_rewriter(llm) if llm is not None else None
+        return plan_query(
+            question, history, self.store,
+            relevance_floor=self.settings.relevance_floor,
+            dense_rescue_floor=self.settings.dense_rescue_floor,
+            scope=scope, top_k=self.settings.top_k,
+            rewrite_mode=self.settings.query_rewrite, rewriter=rewriter)
 
     def _generate(
         self,

@@ -67,6 +67,11 @@ class Embedder:
     def embed_batch(self, texts: Sequence[str]) -> List[List[float]]:
         return [self.embed(t) for t in texts]
 
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a search query. Asymmetric models override this to add the
+        query instruction their training expects."""
+        return self.embed(text)
+
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     """Cosine similarity of two vectors.
@@ -156,7 +161,7 @@ class SentenceTransformerEmbedder(Embedder):  # pragma: no cover - optional path
 
     name = "sentence-transformers"
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -169,12 +174,30 @@ class SentenceTransformerEmbedder(Embedder):  # pragma: no cover - optional path
         self._model = SentenceTransformer(model_name)
         self.dimensions = int(self._model.get_sentence_embedding_dimension())
         self.model_name = model_name
+        # The model name is part of the cache signature: two models with the
+        # same dimensionality produce incomparable vectors.
+        self.name = "sentence-transformers:{}".format(model_name)
+        low = model_name.lower()
+        # Asymmetric retrieval models expect instruction prefixes.
+        if "e5" in low:
+            self._q_prefix, self._p_prefix = "query: ", "passage: "
+        elif "bge" in low and "-m3" not in low:
+            self._q_prefix, self._p_prefix = (
+                "Represent this sentence for searching relevant passages: ", "")
+        else:
+            self._q_prefix = self._p_prefix = ""
         self._lock = threading.Lock()
 
     def embed(self, text: str) -> List[float]:
         return self.embed_batch([text])[0]
 
+    def embed_query(self, text: str) -> List[float]:
+        return self._encode([self._q_prefix + text])[0]
+
     def embed_batch(self, texts: Sequence[str]) -> List[List[float]]:
+        return self._encode([self._p_prefix + t for t in texts])
+
+    def _encode(self, texts: Sequence[str]) -> List[List[float]]:
         if not texts:
             return []
         # The model is not documented as thread-safe and FastAPI serves from a
@@ -197,10 +220,18 @@ def build_embedder(backend: str, dimensions: int = DEFAULT_DIMENSIONS) -> Embedd
     whole system still works on the hashing backend, so degrading loudly is
     better than refusing to boot.
     """
+    import importlib.util
+    import os
+
     choice = (backend or "hashing").strip().lower()
+    if choice == "auto":
+        # Semantic embeddings when the optional package is installed,
+        # hashing otherwise (M3 default).
+        choice = "st" if importlib.util.find_spec("sentence_transformers") else "hashing"
     if choice in {"sentence-transformers", "sentence_transformers", "st"}:
         try:
-            return SentenceTransformerEmbedder()
+            return SentenceTransformerEmbedder(
+                os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"))
         except Exception:
             logger.warning(
                 "Could not initialise the sentence-transformers backend; "

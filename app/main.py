@@ -405,4 +405,9 @@ if WEB_DIR.exists():
 
     @app.get("/", include_in_schema=False)
     def index():
+        # The notebook UI (M5). The original single-corpus UI is at /classic.
+        return FileResponse(str(WEB_DIR / "notebook" / "index.html"))
+
+    @app.get("/classic", include_in_schema=False)
+    def classic():
         return FileResponse(str(WEB_DIR / "index.html"))

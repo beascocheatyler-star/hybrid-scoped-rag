@@ -490,6 +490,20 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
             raise HTTPException(status_code=404, detail="Job not found.")
         return job
 
+    @r.get("/notebooks/{nb_id}/jobs", response_model=List[JobOut])
+    def list_jobs(nb_id: str, limit: int = Query(20, ge=1, le=100)) -> List[JobOut]:
+        notebook_store(nb_id)
+        rows = db.all("SELECT * FROM jobs WHERE notebook_id = ? ORDER BY created_at DESC LIMIT ?",
+                      (nb_id, limit))
+        from app.core.jobs import Job as _Job
+
+        out = []
+        for row in rows:
+            d = _Job.from_row(row).to_dict()
+            d.pop("payload", None)
+            out.append(JobOut(**d))
+        return out
+
     @r.get("/jobs/{job_id}", response_model=JobOut)
     def get_job(job_id: str) -> JobOut:
         d = job_for_user(job_id).to_dict()

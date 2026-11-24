@@ -19,8 +19,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 556 tests, all offline
-python run.py                     # web UI at http://localhost:8000
+pytest                            # 559 tests, all offline
+python run.py                     # notebook UI at http://localhost:8000 (classic UI at /classic)
 ```
 
 ---
@@ -328,12 +328,15 @@ app/
 examples/
   course_ta/ customer_care/   The two bundled demo corpora
   public_domain/              Constitution, Faraday, Darwin (eval corpora)
-web/                   Vanilla JS UI, no build step
+web/                   Vanilla JS, no build step
+  notebook/index.html  Notebook UI (/)
+  js/                  ES modules: api, markdown (escape-first renderers), app, studio
+  index.html, app.js   Classic single-corpus UI (/classic)
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
 eval/                  Offline/live eval harness + labelled datasets
-tests/                 556 offline tests (test_invariants.py pins I1–I9)
+tests/                 559 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing

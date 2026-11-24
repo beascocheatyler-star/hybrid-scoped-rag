@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased — M5: notebook UI
+
+### Added
+- Notebook UI at `/` (vanilla ES modules, no build step): home grid
+  (create, rename, copy, delete); three panels for sources (add dialog for
+  files/URL/YouTube/text, status, selection, label groups, metadata chips,
+  viewer drawer with Source Guide), chat (streaming, `[n]` chips with hover
+  cards, click-through to the highlighted span, unsupported-sentence styling,
+  copy/save/regenerate/feedback, "Why this answer?", overview with suggested
+  questions) and studio (jobs with cancel, notes board).
+- Panels become tabs under 900 px; keyboard and ARIA support. Lighthouse
+  accessibility 100, best practices 100.
+- `tests/notebook_harness.js` (29 XSS/behaviour checks for the new
+  renderers) and an optional Playwright smoke test.
+- `GET /api/v2/notebooks/{nb}/jobs`.
+- `docs/qa.md` manual QA checklist.
+
+### Changed
+- The original UI moved to `/classic`.
+
+
 ## Unreleased — M4: verifiable citations, persistent chat, streaming
 
 ### Added

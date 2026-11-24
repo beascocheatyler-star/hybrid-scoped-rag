@@ -10,3 +10,6 @@ faster-whisper>=1.0         # local audio transcription
 pytesseract>=0.3            # image OCR (needs the Tesseract binary)
 Pillow>=10.0                # image OCR
 pdf2image>=1.17             # OCR fallback for scanned PDFs (needs Poppler)
+
+# Development only: browser smoke test (tests/test_e2e_playwright.py); uses system Chrome.
+# playwright>=1.45

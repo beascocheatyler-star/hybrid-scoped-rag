@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api_v2 import create_v2_router
 from app.config import get_settings
 from app.core.embedding import get_embedder
 from app.core.engine import ChatEngine, LLMUnavailableError
@@ -18,7 +19,9 @@ from app.core.extract import SUPPORTED_EXTENSIONS, ExtractionError
 from app.core.guard import classify
 from app.core.metadata import InvalidFilterError, ScopeFilter
 from app.core.persona import PRESETS, Persona, PersonaStore
-from app.core.store import DocumentStore, DuplicateDocumentError
+from app.core.notebooks import SourceLimitError
+from app.core.services import build_services
+from app.core.store import DuplicateDocumentError
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -44,15 +47,13 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 settings = get_settings()
 embedder = get_embedder(settings.embedding_backend, settings.embedding_dimensions)
-store = DocumentStore(
-    data_dir=settings.data_dir,
-    chunk_size=settings.chunk_size,
-    overlap=settings.chunk_overlap,
-    embedder=embedder,
-    rrf_k=settings.rrf_k,
-    lexical_weight=settings.lexical_weight,
-    dense_weight=settings.dense_weight,
-)
+# SQLite-backed notebooks (M1). The v1 /api/* routes operate on the Default
+# notebook, so existing clients keep working unchanged; /api/v2 addresses any
+# notebook. A legacy corpus.json is imported into the Default notebook once.
+services = build_services(settings, embedder)
+registry = services.registry
+jobs = services.jobs
+store = registry.default_store()
 personas = PersonaStore(settings.data_dir)
 engine = ChatEngine(settings=settings, store=store)
 
@@ -198,6 +199,8 @@ async def upload_documents(
         except ExtractionError as exc:
             skipped.append({"name": filename, "reason": str(exc)})
         except InvalidFilterError as exc:
+            skipped.append({"name": filename, "reason": str(exc)})
+        except SourceLimitError as exc:
             skipped.append({"name": filename, "reason": str(exc)})
         except Exception as exc:
             logger.exception("Failed to ingest %s", filename)
@@ -384,6 +387,13 @@ def chat(body: ChatRequest) -> ChatResponse:
         scope=scope,
     )
     return ChatResponse(**result.to_dict())
+
+
+# --------------------------------------------------------------------------
+# v2: notebooks, sources, jobs
+# --------------------------------------------------------------------------
+
+app.include_router(create_v2_router(services, settings))
 
 
 # --------------------------------------------------------------------------

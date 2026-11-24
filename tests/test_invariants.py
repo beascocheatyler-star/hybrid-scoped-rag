@@ -114,16 +114,45 @@ def test_i1_excluded_source_never_reaches_the_prompt(tmp_path, two_doc_store):
 
 
 # --------------------------------------------------------------------- I2
-# Notebooks arrive in M1. Today the isolation unit is the DocumentStore/data
-# directory; M1 replaces this with a per-notebook registry test.
+# Notebook isolation is absolute: no query, IDF statistic, facet list or
+# duplicate check reads another notebook's data.
 
 
-def test_i2_separate_stores_share_no_state(tmp_path):
-    a = _store(tmp_path / "a", [("returns.md", RETURNS, None)])
-    b = _store(tmp_path / "b", [("syllabus.md", SYLLABUS, None)])
-    assert b.index.search("zebra boots refund", top_k=20) == []
-    assert "returns.md" not in [d.name for d in b.list_documents()]
-    assert len(a.index) and len(b.index)
+def test_i2_notebooks_share_no_state(tmp_path):
+    from app.core.embedding import HashingEmbedder
+    from app.core.services import build_services
+
+    settings = Settings()
+    settings.data_dir = tmp_path
+    svc = build_services(settings, HashingEmbedder(dimensions=256))
+    try:
+        reg = svc.registry
+        a, b = reg.create("A"), reg.create("B")
+        sa, sb = reg.store(a.id), reg.store(b.id)
+        sb.add("syllabus.md", SYLLABUS.encode(), {"course": "cs1428"})
+        before = [(h.chunk.chunk_id, h.score, h.normalized, h.coverage)
+                  for h in sb.index.search("final exam week", top_k=6)]
+        sa.add("returns.md", RETURNS.encode(), {"dept": "support"})
+        sa.add("syllabus.md", SYLLABUS.encode())  # same bytes: allowed in A
+        # Retrieval: B never sees A's chunks.
+        b_docs = {d.doc_id for d in sb.list_documents()}
+        a_chunks = {c.chunk_id for c in sa.index._chunks}
+        for q in ["zebra print boots refund", "final exam", "warranty footwear"]:
+            for h in sb.index.search(q, top_k=50):
+                assert h.chunk.doc_id in b_docs and h.chunk.chunk_id not in a_chunks
+        # IDF and coverage: adding to A does not change any score in B.
+        after = [(h.chunk.chunk_id, h.score, h.normalized, h.coverage)
+                 for h in sb.index.search("final exam week", top_k=6)]
+        assert before == after
+        # Facets and counts are per notebook.
+        assert sb.facets() == {"course": {"cs1428": 1}}
+        assert sb.count_matching(ScopeFilter.parse({"dept": "support"})) == 0
+        # The gate in B treats A's topic as off-topic.
+        engine, fake = _engine(tmp_path, sb)
+        ans = engine.answer("How long do I have to return zebra print boots?", PERSONA)
+        assert ans.decision == ScopeDecision.OUT_OF_SCOPE and fake.call_count == 0
+    finally:
+        svc.close()
 
 
 # --------------------------------------------------------------------- I3

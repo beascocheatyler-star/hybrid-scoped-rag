@@ -1,0 +1,15 @@
+{"notebook": "syllabus", "turns": ["When is Exam 1?", "What chapters does it cover?"], "standalone": "What chapters does Exam 1 cover?"}
+{"notebook": "syllabus", "turns": ["What is the late work policy?", "Can I avoid that penalty?"], "standalone": "Can I avoid the late work penalty with late days?"}
+{"notebook": "syllabus", "turns": ["Is the final exam cumulative?", "When is it?"], "standalone": "When is the final exam?"}
+{"notebook": "syllabus", "turns": ["Who is the instructor?", "What is their email?"], "standalone": "What is the instructor's email?"}
+{"notebook": "syllabus", "turns": ["Is lab attendance required?", "What happens if I skip one?"], "standalone": "What happens if I skip a lab?"}
+{"notebook": "syllabus", "turns": ["Can I use AI tools on homework?", "What about for conceptual questions?"], "standalone": "Can I use AI tools for conceptual questions?"}
+{"notebook": "syllabus", "turns": ["What textbook is required?", "Is an older edition okay?"], "standalone": "Is an older edition of the textbook acceptable?"}
+{"notebook": "syllabus", "turns": ["What happens if I miss an exam?", "How quickly do I have to tell them?"], "standalone": "How quickly must I notify the instructor of a missed exam?"}
+{"notebook": "support", "turns": ["How long do I have to return an item?", "Does that apply to worn shoes too?"], "standalone": "Can worn footwear be returned?"}
+{"notebook": "support", "turns": ["How much is expedited shipping?", "And overnight?"], "standalone": "How much is overnight shipping?"}
+{"notebook": "support", "turns": ["What does the warranty cover?", "How do I make a claim?"], "standalone": "How do I file a warranty claim?"}
+{"notebook": "support", "turns": ["Can I cancel my order?", "What if it's been two hours?"], "standalone": "Can I cancel an order after 60 minutes?"}
+{"notebook": "support", "turns": ["When will my refund post?", "Why is it taking longer?"], "standalone": "Why might a refund take longer to post?"}
+{"notebook": "support", "turns": ["Do you ship internationally?", "What about PO boxes?"], "standalone": "Do you ship to PO boxes?"}
+{"notebook": "support", "turns": ["Do gift cards expire?", "Can I get cash for one?"], "standalone": "Can gift cards be redeemed for cash?"}

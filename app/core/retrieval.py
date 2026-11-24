@@ -78,6 +78,9 @@ _B = 0.75
 RRF_K_DEFAULT = 60
 
 
+STOPWORDS = _STOPWORDS
+
+
 def tokenize(text: str, keep_stopwords: bool = False) -> List[str]:
     """Lowercase, strip punctuation, drop stopwords and 1-character noise."""
     tokens = _TOKEN_RE.findall(text.lower())
@@ -102,6 +105,15 @@ class Chunk:
     tokens: List[str] = field(default_factory=list, repr=False)
     term_freqs: Counter = field(default_factory=Counter, repr=False)
     embedding: Optional[List[float]] = field(default=None, repr=False)
+    # Anchors into the source's stored extracted text (M2). None for chunks
+    # from the legacy JSON store, which never recorded positions.
+    start_char: Optional[int] = None
+    end_char: Optional[int] = None
+    page: Optional[int] = None
+    slide: Optional[int] = None
+    t_start_ms: Optional[int] = None
+    t_end_ms: Optional[int] = None
+    section_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.tokens:

@@ -21,5 +21,10 @@ stub = "var el = {};\n"
 
 h = open(harness_js, encoding="utf-8").read()
 
-open(out_path, "w", encoding="utf-8").write(stub + body + h)
+# Node has no global print(); JavaScriptCore does. Shim it for Node.
+PRINT_SHIM = (
+    "if (typeof print === \"undefined\") "
+    "{ globalThis.print = (...a) => console.log(...a); }\n"
+)
+open(out_path, "w", encoding="utf-8").write(PRINT_SHIM + stub + body + h)
 print("wrote", out_path)

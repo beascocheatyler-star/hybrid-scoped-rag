@@ -30,7 +30,7 @@ POST /api/chat  { "message": "...", "scope": {"course": "CS1428"} }
         ├─ greeting? ───────────────────────► small_talk → LLM
         ├─ "what can you do?" ──────────────► meta → LLM
         ├─ relevance < 0.40 ────────────────┐
-        │     └─ dense ≥ 0.25? ─────────────┤──► borderline → LLM + strict verify
+        │     └─ dense ≥ 0.36? ─────────────┤──► borderline → LLM + strict verify
         │        else ──────────────────────┴──► refuse, no LLM call   ← free
         ├─ 0.40 ≤ relevance < 0.50 ─────────► borderline → LLM + verify instruction
         └─ relevance ≥ 0.50 ────────────────► in_scope → LLM
@@ -68,7 +68,35 @@ Two key properties:
 | `app/core/guard.py` | The scope decision |
 | `app/core/engine.py` | Prompt construction, Claude call, citation assembly |
 | `app/core/persona.py` | Persona config + presets, persisted |
-| `app/core/store.py` | Document lifecycle and JSON persistence |
+| `app/core/db.py` | SQLite (WAL) connection and numbered-SQL migrations |
+| `app/core/notebooks.py` | `NotebookStore`: one notebook's sources, chunks, vectors and private `HybridIndex`; `NotebookRegistry` |
+| `app/core/jobs.py` | Durable background jobs; interrupted jobs are re-queued on boot |
+| `app/core/importer.py` | One-time import of a legacy `corpus.json` into the Default notebook |
+| `app/api_v2.py` | `/api/v2` routes |
+| `app/core/store.py` | Legacy JSON store, now used only by the importer and its own tests |
+
+---
+
+## Storage and isolation (M1)
+
+```
+DATA_DIR/
+  hsr.sqlite3                      notebooks, sources, chunks, float32 vectors, jobs
+  notebooks/{nb}/sources/{id}/
+      original/<filename>          the upload, byte for byte
+      extracted.txt                the text that chunks were cut from
+  legacy-backup-<timestamp>/       pre-M1 corpus.json / persona.json, if any
+```
+
+`NotebookRegistry.store(nb)` builds that notebook's `HybridIndex` from its own
+`ready` rows only. Isolation is structural: there is no shared index to filter,
+so a query, an IDF statistic or a facet count cannot reach another notebook.
+The v1 routes are bound to the Default notebook's store, and `ChatEngine` is
+unchanged because `NotebookStore` implements the old `DocumentStore` interface.
+
+Uploads through v2 are written to disk, recorded as `queued`, and ingested by a
+job. Only `ready` sources are searchable. Jobs left `running` by a crash are
+re-queued at boot.
 
 ---
 

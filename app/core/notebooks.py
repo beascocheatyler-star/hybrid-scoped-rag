@@ -323,6 +323,13 @@ class NotebookStore:
         source_id = uuid.uuid4().hex[:12]
         rel = Path("notebooks") / self.notebook_id / "sources" / source_id / "original" / safe_name
 
+        dup = self.db.one(
+            _SOURCE_SELECT + "WHERE s.notebook_id = ? AND s.sha256 = ?",
+            (self.notebook_id, digest),
+        )
+        if dup and dup["status"] == "failed":
+            # A failed attempt must not block a retry of the same bytes.
+            self._purge(dup["id"])
         with self.db.tx() as c:
             dup = c.execute(
                 _SOURCE_SELECT + "WHERE s.notebook_id = ? AND s.sha256 = ?",

@@ -282,6 +282,18 @@ def test_ingest_job_failure_is_recorded(svc):
     assert st.is_empty
 
 
+def test_failed_source_does_not_block_retry(svc):
+    nb = svc.registry.create("A")
+    st = svc.registry.store(nb.id)
+    src = st.create_source("s.md", SYL)
+    st._set_status(src.id, "failed", "boom")
+    again = st.create_source("s.md", SYL)  # same bytes: replaces the failed one
+    assert again.id != src.id and st.get_source(src.id) is None
+    st.process_source(again.id)
+    with pytest.raises(DuplicateDocumentError):  # a ready duplicate still blocks
+        st.create_source("s2.md", SYL)
+
+
 def test_cancel_queued_job(svc):
     nb = svc.registry.create("A")
     st = svc.registry.store(nb.id)

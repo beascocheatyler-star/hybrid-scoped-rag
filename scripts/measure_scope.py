@@ -90,7 +90,8 @@ def score_all(store: DocumentStore, questions):
     out = []
     for q in questions:
         hits = store.index.search(q, top_k=6)
-        out.append((relevance(hits[0] if hits else None), q))
+        # Same hit the gate reads: strongest lexical evidence among the top-k (M3).
+        out.append((relevance(max(hits, key=lambda h: h.normalized) if hits else None), q))
     return out
 
 

@@ -74,7 +74,12 @@ _META_PATTERNS = re.compile(
 # decides the easy cases for free; the model adjudicates only the hard ones.
 #
 # See docs/scope-tuning.md for the measured distribution and how to re-tune.
-RELEVANCE_FLOOR_DEFAULT = 0.40
+# M3 re-calibration: once the gate read the strongest lexical hit (defect #3
+# fix) instead of the fused rank-1 hit, 0.40 let more off-topic questions into
+# the borderline band (false accepts 0.188 -> 0.237 on the 160-question eval
+# set). Measured by scripts/measure_gate.py: 0.42 gives false accepts 0.175 and
+# false refusals 0.062, both below the M0 baseline (0.188 / 0.075).
+RELEVANCE_FLOOR_DEFAULT = 0.42
 
 # Above this, retrieval is confident enough to answer without hedging.
 CONFIDENT_RELEVANCE = 0.50
@@ -89,9 +94,14 @@ CONFIDENT_RELEVANCE = 0.50
 #     in-scope questions    min 0.115  median 0.195  max 0.361
 #     off-topic questions   min 0.038  median 0.124  max 0.206
 #
-# The distributions overlap, so no threshold separates them cleanly. 0.25 sits
-# just above the off-topic maximum: it admits the strongest paraphrase cases
-# while refusing every off-topic question in the sample. Note that rescue only
+# The distributions overlap, so no threshold separates them cleanly. The rule
+# is that the floor must sit above the off-topic maximum. 0.25 did, on that
+# 20-question sample. On the 160-question eval gate set (five corpora, three of
+# them long public-domain texts; scripts/measure_rescue.py) the off-topic
+# maximum is 0.356, and 0.25 rescued 5 off-topic questions and 0 answerable
+# ones. 0.36 restores the rule: false accepts 0.250 -> 0.188, false refusals
+# unchanged at 0.075. Raising the floor can only answer fewer questions.
+# Note that rescue only
 # promotes to BORDERLINE, where the model is explicitly instructed to verify
 # the context — so a false accept here costs one guarded LLM call, not a wrong
 # answer.
@@ -101,7 +111,7 @@ CONFIDENT_RELEVANCE = 0.50
 # overlap rather than meaning. A sentence-transformers backend spreads them
 # much wider and wants a substantially higher floor (~0.5); re-run the script
 # after switching backends. Set DENSE_RESCUE_FLOOR=1.0 to disable rescue.
-DENSE_RESCUE_FLOOR = 0.25
+DENSE_RESCUE_FLOOR = 0.36
 
 
 class ScopeDecision:
@@ -191,7 +201,13 @@ def classify(
     dense_rescue_floor: float = DENSE_RESCUE_FLOOR,
 ) -> ScopeResult:
     """Decide whether ``question`` may be answered from the scoped corpus."""
-    best_hit = hits[0] if hits else None
+    # The gate reads the hit with the strongest *lexical* evidence among the
+    # top-k, not the fused rank-1 hit. RRF can put a dense-only chunk first
+    # (its BM25 normalized score is 0), which used to sink relevance to 0 even
+    # when a lexically strong chunk sat at rank 2 (known defect #3, fixed M3).
+    # Coverage is identical for every hit (it is computed over the filtered
+    # candidate set), so this changes only the BM25 factor.
+    best_hit = max(hits, key=lambda h: h.normalized) if hits else None
     best = relevance(best_hit)
     coverage = best_hit.coverage if best_hit else 0.0
     best_dense = max((h.dense_score for h in hits), default=0.0)

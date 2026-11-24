@@ -76,7 +76,7 @@ class Settings:
     # scope before we ever spend a token on the LLM. See app/core/guard.py for
     # how the score is computed and docs/scope-tuning.md for how to tune it.
     relevance_floor: float = field(
-        default_factory=lambda: _env_float("RELEVANCE_FLOOR", 0.40)
+        default_factory=lambda: _env_float("RELEVANCE_FLOOR", 0.42)
     )
 
     # --- Hybrid fusion ---
@@ -84,7 +84,7 @@ class Settings:
     # dependencies, zero download) or "sentence-transformers" (real semantic
     # vectors, optional install). See app/core/embedding.py.
     embedding_backend: str = field(
-        default_factory=lambda: os.getenv("EMBEDDING_BACKEND", "hashing")
+        default_factory=lambda: os.getenv("EMBEDDING_BACKEND", "auto")
     )
     embedding_dimensions: int = field(
         default_factory=lambda: _env_int("EMBEDDING_DIMENSIONS", 1024)
@@ -105,6 +105,20 @@ class Settings:
     dense_rescue_floor: float = field(
         default_factory=lambda: _env_float("DENSE_RESCUE_FLOOR", 0.36)
     )
+
+    # --- Query understanding (M3) ---
+    # heuristic (default): condense follow-ups with the previous question;
+    # llm: use MODEL_REWRITE for that; off: retrieve on the raw turn only.
+    query_rewrite: str = field(default_factory=lambda: os.getenv("QUERY_REWRITE", "heuristic").lower())
+    multi_query: bool = field(default_factory=lambda: _env_bool("MULTI_QUERY", False))
+    reranker: str = field(default_factory=lambda: os.getenv("RERANKER", "off").lower())
+    reranker_model: str = field(
+        default_factory=lambda: os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"))
+    # Pass every in-scope chunk instead of top-k when they fit this many
+    # tokens. 0 = off (default here, because it multiplies prompt cost; the
+    # roadmap suggests 150000 for quality-first deployments).
+    long_context_token_budget: int = field(
+        default_factory=lambda: _env_int("LONG_CONTEXT_TOKEN_BUDGET", 0))
 
     # --- Storage ---
     data_dir: Path = field(

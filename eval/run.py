@@ -20,7 +20,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -51,6 +51,7 @@ DIRECTION = {
     "gate_false_accept_confident": False,
     "gate_false_refuse": False,
     "followup_in_scope": True,
+    "followup_false_accept": False,
     "context_fact_recall": True,
     "injection_resistance": True,
 }
@@ -73,10 +74,15 @@ def build_notebooks() -> Dict[str, "NotebookStore"]:
     sup = (EX / "customer_care" / "returns_and_shipping.md").read_bytes()
     pd = EX / "public_domain"
 
+    global _EVAL_SETTINGS
     settings = Settings()
     settings.data_dir = Path(tempfile.mkdtemp(prefix="hsr-eval-"))
     svc = build_services(settings, get_embedder(settings.embedding_backend,
                                                 settings.embedding_dimensions))
+    # Every evaluation step must use the floors the app would use for this
+    # embedder (calibration row or the uncalibrated-semantic safety default),
+    # not a fresh Settings() with hashing-tuned defaults.
+    _EVAL_SETTINGS = settings
     spec = {
         "constitution": [("us_constitution.md", (pd / "us_constitution.md").read_bytes(), None)],
         "faraday": [("faraday_candle_lecture1.md", (pd / "faraday_candle_lecture1.md").read_bytes(), None)],
@@ -95,8 +101,18 @@ def build_notebooks() -> Dict[str, "NotebookStore"]:
     return out
 
 
+_EVAL_SETTINGS: Optional[Settings] = None
+
+
+def _embedder():
+    from app.core.embedding import get_embedder
+
+    st = _settings()
+    return get_embedder(st.embedding_backend, st.embedding_dimensions)
+
+
 def _settings() -> Settings:
-    return Settings()
+    return _EVAL_SETTINGS if _EVAL_SETTINGS is not None else Settings()
 
 
 def eval_retrieval(nbs, out: Dict, latencies: List[float]) -> None:
@@ -157,18 +173,28 @@ def eval_gate(nbs, out: Dict, settings: Settings) -> List[Dict]:
 
 
 def eval_followups(nbs, out: Dict, settings: Settings) -> None:
-    """Baseline: the engine retrieves on the raw follow-up turn only."""
+    """Two-turn conversations through the production planner (heuristic
+    rewrite, no LLM). Answerable follow-ups should pass; off-topic follow-ups
+    after an in-scope turn must still be refused."""
+    from app.core.query import plan_query
+
     rows = load("followups.jsonl")
-    ok = 0
+    ok, n_ok, fa, n_fa = 0, 0, 0, 0
     for r in rows:
         store = nbs[r["notebook"]]
-        q = r["turns"][-1]
-        hits = store.index.search(q, top_k=TOP_K)
-        res = classify(q, hits, relevance_floor=settings.relevance_floor,
-                       corpus_empty=False,
-                       dense_rescue_floor=settings.dense_rescue_floor)
-        ok += 1 if res.allows_llm else 0
-    out["followup_in_scope"] = ok / len(rows) if rows else 0.0
+        hist = [{"role": "user", "content": r["turns"][0]},
+                {"role": "assistant", "content": "(answer)"}]
+        p = plan_query(r["turns"][-1], hist, store, settings.relevance_floor,
+                       settings.dense_rescue_floor, top_k=TOP_K,
+                       rewrite_mode=settings.query_rewrite)
+        if r.get("expected", "answer") == "answer":
+            n_ok += 1
+            ok += 1 if p.result.allows_llm else 0
+        else:
+            n_fa += 1
+            fa += 1 if p.result.allows_llm else 0
+    out["followup_in_scope"] = ok / n_ok if n_ok else 0.0
+    out["followup_false_accept"] = fa / n_fa if n_fa else 0.0
     out["_n_followups"] = len(rows)
 
 
@@ -205,7 +231,8 @@ def eval_injection(out: Dict, llm_factory) -> List[Dict]:
     rows = load("injection.jsonl")
     passed, failures, refused_in_scope = 0, [], 0
     for r in rows:
-        store = DocumentStore(data_dir=Path(tempfile.mkdtemp(prefix="hsr-inj-")))
+        store = DocumentStore(data_dir=Path(tempfile.mkdtemp(prefix="hsr-inj-")),
+                              embedder=_embedder())
         store.add(r["source_name"], r["source"].encode("utf-8"))
         engine = ChatEngine(_settings(), store)
         llm = llm_factory()
@@ -240,8 +267,8 @@ def run(offline: bool) -> Dict:
         def llm_factory():
             return None  # engine builds the real client from ANTHROPIC_API_KEY
 
-    settings = _settings()
     nbs = build_notebooks()
+    settings = _settings()
     out: Dict = {"_mode": "offline" if offline else "live",
                  "_embedder": nbs["syllabus"]._embedding_signature}
     lat: List[float] = []

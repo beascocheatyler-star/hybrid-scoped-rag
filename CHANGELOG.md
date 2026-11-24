@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased — M3: retrieval quality
+
+### Fixed
+- Known defect #3: the gate read the fused rank-1 hit, so a dense-only top
+  hit (BM25 0) could sink relevance. It now reads the strongest lexical hit
+  among the top-k.
+- Known defect #4: non-Latin questions produced no tokens. A Unicode tokenizer
+  (NFKC, every script, CJK bigrams) replaces the ASCII one; ASCII behaviour is
+  bit-identical.
+- Known defect #5: follow-ups retrieved on the raw turn only. A deterministic
+  follow-up planner condenses them (follow-ups answered 0.467 -> 0.944) while
+  off-topic follow-ups are still refused.
+- The sentence-transformers cache signature now includes the model name.
+- Eval harness: the gate and injection steps now use the same calibrated
+  settings as the app.
+
+### Changed
+- `RELEVANCE_FLOOR` default 0.40 -> 0.42, re-measured for the corrected gate:
+  false accepts 0.188 -> 0.175 and false refusals 0.075 -> 0.062 against M0.
+- `EMBEDDING_BACKEND` default `auto`: sentence-transformers
+  (`EMBEDDING_MODEL`, default `BAAI/bge-small-en-v1.5`) if installed, else
+  hashing.
+- Search vectorised with NumPy and an inverted index: p95 285 ms -> 2.2 ms at
+  10k chunks; 33 ms at 100k.
+- `measure_scope.py` scores the same hit the gate reads.
+
+### Added
+- `calibrations` table (migration 002) and `scripts/measure_gate.py
+  [--write]`; env > calibration > default. An uncalibrated semantic embedder
+  runs with dense rescue off (measured: 0.36 would admit 64/80 off-topic
+  questions under bge-small).
+- `QUERY_REWRITE` (heuristic | llm | off), `MULTI_QUERY`, `RERANKER`
+  (cross-encoder), `LONG_CONTEXT_TOKEN_BUDGET` (default 0, off).
+- 10 more follow-up conversations, 7 of them off-topic, and a
+  `followup_false_accept` metric.
+- `tests/test_m3_retrieval.py`, including a NumPy-vs-Python equivalence test.
+
+### Not met
+- +15 points of recall@6 with a semantic embedder: measured +8.8 (ceiling +16
+  on this dataset). See `docs/design/M3.md`.
+
+
 ## Unreleased — M2: anchored ingestion and new source types
 
 ### Added

@@ -10,8 +10,7 @@ time and everything else (extract, chunk, insert, index). The M1 target is
 that "everything else" stays under 50 ms and does not grow with corpus size.
 
 search: p50/p95 hybrid search latency over a synthetic notebook of N chunks.
-The roadmap target (p95 < 150 ms at 100k chunks) needs NumPy cosine, which
-arrives in M3; until then this prints the pure-Python number honestly.
+Roadmap target: p95 < 150 ms at 100k chunks with NumPy installed.
 """
 
 from __future__ import annotations
@@ -83,8 +82,18 @@ def bench_ingest(n_docs: int, dims: int) -> None:
     print("  target p95 < 50 ms excluding embedding: {}".format("PASS" if ok else "FAIL"))
 
 
+def _zipf_vocab(rng, size=5000):
+    """Pseudo-words with Zipf-like frequencies, like real text (a uniform
+    30-word vocabulary would make every chunk match every query)."""
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    vocab = ["".join(rng.choice(letters) for _ in range(rng.randint(4, 9))) for _ in range(size)]
+    weights = [1.0 / (r + 1) for r in range(size)]
+    return vocab, weights
+
+
 def bench_search(n_chunks: int, dims: int, queries: int = 50) -> None:
     rng = random.Random(11)
+    vocab, weights = _zipf_vocab(rng)
     emb = HashingEmbedder(dimensions=dims)
     with tempfile.TemporaryDirectory() as tmp:
         s = Settings()
@@ -94,7 +103,7 @@ def bench_search(n_chunks: int, dims: int, queries: int = 50) -> None:
         chunks = [
             Chunk(chunk_id="c{}".format(i), doc_id="d{}".format(i // 10),
                   doc_name="d{}.md".format(i // 10), position=i % 10,
-                  text=" ".join(rng.choice(WORDS) for _ in range(150)))
+                  text=" ".join(rng.choices(vocab, weights, k=150)))
             for i in range(n_chunks)
         ]
         t0 = time.perf_counter()
@@ -102,12 +111,17 @@ def bench_search(n_chunks: int, dims: int, queries: int = 50) -> None:
         build = time.perf_counter() - t0
         lat = []
         for _ in range(queries):
-            q = " ".join(rng.choice(WORDS) for _ in range(5))
+            q = " ".join(rng.choices(vocab[50:2000], k=4))
             t0 = time.perf_counter()
             st.index.search(q, top_k=6)
             lat.append((time.perf_counter() - t0) * 1000)
         svc.close()
-    print("SEARCH  {} chunks, hashing {}d, pure-Python cosine (NumPy in M3)".format(n_chunks, dims))
+    try:
+        import numpy  # noqa: F401
+        mode = "NumPy cosine"
+    except ImportError:
+        mode = "pure-Python cosine (install numpy)"
+    print("SEARCH  {} chunks, hashing {}d, Zipf vocabulary, {}".format(n_chunks, dims, mode))
     print("  index build {:.1f} s; search p50 {:.1f} ms  p95 {:.1f} ms".format(
         build, _pct(lat, 50), _pct(lat, 95)))
 

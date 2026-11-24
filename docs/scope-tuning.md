@@ -234,3 +234,38 @@ score runs on *every* question to power the gate, that cost is paid constantly
 
 A practical mitigation that needs no code change: include a glossary or FAQ in
 the uploaded corpus. It supplies the vocabulary users actually ask in.
+
+
+---
+
+## M3: the gate reads the strongest lexical hit; floor 0.40 → 0.42
+
+Before M3 the gate scored `hits[0]`, the *fused* rank-1 hit. When RRF put a
+dense-only chunk first, its BM25 factor was 0 and relevance collapsed even if
+a lexically strong chunk sat at rank 2. The gate now reads the hit with the
+highest normalized BM25 among the top-k. That is the correct measurement, but
+it can only raise relevance, so at the old floor it answered more. Measured on
+the 160-question gate set (`python scripts/measure_gate.py`):
+
+```
+floor   FA      FAconf  FR
+0.40    0.237   0.025   0.037
+0.42    0.175   0.025   0.062   <- new default
+0.44    0.138   0.025   0.125
+0.46    0.062   0.025   0.150
+```
+
+M0 baseline: FA 0.188, FR 0.075. **0.42 is the only swept floor where both
+error rates are below the baseline**, so it is the default. Raising the floor
+can only shrink the answered set (I6).
+
+## Per-embedder calibration
+
+`scripts/measure_gate.py --write` stores `(embedder_signature,
+relevance_floor, dense_rescue_floor)` in the `calibrations` table. At boot the
+app uses, in order: the environment variable, then the calibration row for
+the active embedder, then the default. A non-hashing embedder with no row runs
+with dense rescue disabled. Measured for `BAAI/bge-small-en-v1.5`: off-topic
+questions reach dense 0.635; at the hashing floor 0.36 rescue would admit
+64 of 80 off-topic questions. The calibrated floor is 0.70 (FA 0.163,
+FR 0.050).

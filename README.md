@@ -176,9 +176,9 @@ raising the floor must never make the bot answer *more* questions.
   SQLite (WAL), and each notebook's hybrid index is rebuilt from it lazily.
   Running several uvicorn workers over one `DATA_DIR` would give each worker
   its own index, which goes stale when another worker writes. Use one worker.
-- **Search is pure-Python cosine.** Fine for a few thousand chunks; measured
-  p95 is 285 ms at 10k chunks (`scripts/bench.py search`). NumPy vectorisation
-  is planned for M3, with a target of p95 under 150 ms at 100k chunks.
+- **Large notebooks want NumPy.** With NumPy, search p95 is 2.2 ms at 10k and
+  33 ms at 100k chunks (`scripts/bench.py search`); without it, the pure-Python
+  path is about 285 ms at 10k.
 - **Some source types need optional installs.** URL pages work with the
   standard library (better with `trafilatura`); PPTX, EPUB and HTML are parsed
   with the standard library. YouTube, audio, image OCR and scanned-PDF OCR need
@@ -191,13 +191,15 @@ raising the floor must never make the bot answer *more* questions.
 - **Imported legacy sources have no original file.** The pre-M1 JSON store
   never kept uploads, so documents migrated from `corpus.json` can be
   searched and cited, but `GET .../file` returns 404 for them.
-- **Non-Latin questions are refused.** The tokenizer is ASCII-only, so a
-  question in Chinese or Russian has no searchable terms. Measured: non-English
-  recall@6 is 0.27 and three non-English answerable questions are refused
-  (`docs/eval-baseline.md`). Fix planned for M3.
-- **Follow-up questions retrieve poorly.** Retrieval uses only the current
-  turn, so "What chapters does it cover?" after "When is Exam 1?" is often
-  refused: 7/15 follow-ups pass the gate. Fix planned for M3.
+- **Cross-lingual retrieval is weak.** Any script now tokenizes (Chinese,
+  Russian, Arabic, ...), so a question in the same language as the source
+  works. A Spanish question against an English source has non-English recall@6
+  of only 0.27 with hashing, 0.60 with bge-small and 0.67 with
+  multilingual-e5-small (`docs/design/M3.md`).
+- **Semantic recall gain is +8.8 points, short of the +15 target.** Lexical
+  questions are already at 1.000; the ceiling on this set is +16.
+- **Follow-ups use a heuristic.** 17/18 answerable follow-ups pass and 6/7
+  off-topic follow-ups are refused, on a dataset written alongside the detector.
 
 ---
 
@@ -259,12 +261,16 @@ All optional; every value has a working default.
 | `LLM_PROVIDER` | `anthropic` | or `openai` for any OpenAI-compatible server (Ollama, vLLM); set `OPENAI_BASE_URL` |
 | `MAX_UPLOAD_MB` / `MAX_SOURCE_WORDS` | `200` / `500000` | Per-source limits |
 | `SOURCE_GUIDES` | `true` | Summary, topics and questions per source |
-| `EMBEDDING_BACKEND` | `hashing` | or `sentence-transformers` |
 | `EMBEDDING_DIMENSIONS` | `1024` | Hashing embedder width |
 | `RRF_K` | `60` | Fusion smoothing constant |
 | `LEXICAL_WEIGHT` | `1.0` | Set `0` to disable BM25 |
 | `DENSE_WEIGHT` | `1.0` | Set `0` to disable vectors |
-| `RELEVANCE_FLOOR` | `0.40` | Below this, refuse |
+| `RELEVANCE_FLOOR` | `0.42` | Below this, refuse (or a measured row in `calibrations`) |
+| `EMBEDDING_BACKEND` | `auto` | sentence-transformers if installed, else hashing |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | e.g. `intfloat/multilingual-e5-small` for multilingual |
+| `QUERY_REWRITE` | `heuristic` | Follow-up condensation: `heuristic`, `llm` or `off` |
+| `MULTI_QUERY` / `RERANKER` | `false` / `off` | Context-only improvements; never change the gate |
+| `LONG_CONTEXT_TOKEN_BUDGET` | `0` | Pass all in-scope chunks when they fit (off by default: cost) |
 | `DENSE_RESCUE_FLOOR` | `0.36` | `1.0` disables rescue |
 | `TOP_K` | `6` | Passages per answer |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Characters |

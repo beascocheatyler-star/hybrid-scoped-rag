@@ -13,3 +13,13 @@
 {"notebook": "support", "turns": ["When will my refund post?", "Why is it taking longer?"], "standalone": "Why might a refund take longer to post?"}
 {"notebook": "support", "turns": ["Do you ship internationally?", "What about PO boxes?"], "standalone": "Do you ship to PO boxes?"}
 {"notebook": "support", "turns": ["Do gift cards expire?", "Can I get cash for one?"], "standalone": "Can gift cards be redeemed for cash?"}
+{"notebook": "syllabus", "turns": ["When is Exam 1?", "What about football?"], "standalone": "", "expected": "refuse"}
+{"notebook": "syllabus", "turns": ["What is the late work policy?", "And who won the World Series?"], "standalone": "", "expected": "refuse"}
+{"notebook": "support", "turns": ["How long do I have to return an item?", "What about my taxes?"], "standalone": "", "expected": "refuse"}
+{"notebook": "support", "turns": ["What does the warranty cover?", "Tell me a joke about it"], "standalone": "", "expected": "refuse"}
+{"notebook": "constitution", "turns": ["How long is the President's term?", "And the French president?"], "standalone": "", "expected": "refuse"}
+{"notebook": "darwin", "turns": ["Which bees visit red clover?", "How about honey recipes?"], "standalone": "", "expected": "refuse"}
+{"notebook": "faraday", "turns": ["How are dipped candles made?", "What about scented ones to buy online?"], "standalone": "", "expected": "refuse"}
+{"notebook": "constitution", "turns": ["How many Senators does each State have?", "How long do they serve?"], "standalone": "How long do Senators serve?"}
+{"notebook": "darwin", "turns": ["Which animal is the slowest breeder?", "How fast does it breed then?"], "standalone": "How fast does the elephant breed?"}
+{"notebook": "faraday", "turns": ["What is capillary attraction in a candle?", "Why does that matter for the flame?"], "standalone": "Why does capillary attraction matter for the flame?"}

@@ -9,7 +9,7 @@ from typing import Dict
 ORDER = [
     "retrieval_recall@6", "retrieval_mrr", "retrieval_ndcg@10",
     "recall@6_lexical", "recall@6_paraphrase", "recall@6_non_english",
-    "gate_false_accept", "gate_false_accept_confident", "gate_false_refuse", "followup_in_scope",
+    "gate_false_accept", "gate_false_accept_confident", "gate_false_refuse", "followup_in_scope", "followup_false_accept",
     "context_fact_recall", "citation_precision", "citation_recall",
     "faithfulness", "injection_resistance",
     "search_latency_p50_ms", "search_latency_p95_ms", "prompt_tokens_per_answer",

@@ -29,10 +29,10 @@ POST /api/chat  { "message": "...", "scope": {"course": "CS1428"} }
         ├─ scope matches 0 docs? ───────────► empty_scope, no LLM call
         ├─ greeting? ───────────────────────► small_talk → LLM
         ├─ "what can you do?" ──────────────► meta → LLM
-        ├─ relevance < 0.40 ────────────────┐
+        ├─ relevance < 0.42 ────────────────┐
         │     └─ dense ≥ 0.36? ─────────────┤──► borderline → LLM + strict verify
         │        else ──────────────────────┴──► refuse, no LLM call   ← free
-        ├─ 0.40 ≤ relevance < 0.50 ─────────► borderline → LLM + verify instruction
+        ├─ 0.42 ≤ relevance < 0.50 ─────────► borderline → LLM + verify instruction
         └─ relevance ≥ 0.50 ────────────────► in_scope → LLM
         │
         ▼

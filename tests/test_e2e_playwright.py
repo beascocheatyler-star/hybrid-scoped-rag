@@ -135,3 +135,42 @@ def test_mobile_layout_uses_tabs(server):
         page.click("#tab-sources")
         assert page.is_visible("#panel-sources") and not page.is_visible("#panel-chat")
         browser.close()
+
+
+def test_studio_flashcards_and_mind_map(server):
+    with playwright.sync_playwright() as p:
+        browser = _browser(p)
+        page = browser.new_page(viewport={"width": 1280, "height": 860})
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        page.on("console", lambda m: errors.append("console:" + m.text) if m.type == "error" else None)
+        page.goto(server + "/#/nb/default")
+        page.wait_for_selector("#src-add")
+        page.click("#src-add")
+        page.set_input_files("#add-files", str(EX / "course_ta" / "cs1428_syllabus.md"))
+        page.click("#add-submit")
+        page.wait_for_selector(".src-row.status-ready", timeout=20000)
+
+        page.click("button[aria-label='Generate Flashcards']")
+        page.select_option("#studio-fields select[name=quantity]", "fewer")
+        page.click("#studio-go")
+        page.wait_for_selector("#artifact-dialog[open] .flashcard", timeout=30000)
+        front = page.inner_text(".flashcard")
+        page.click(".flashcard")
+        assert page.inner_text(".flashcard") != front           # flipped
+        page.click("text=Got it")
+        page.wait_for_function("document.querySelector('#artifact-body').innerText.includes('got 1')")
+        page.click("#artifact-close")
+
+        page.click("button[aria-label='Generate Mind map']")
+        page.click("#studio-go")
+        page.wait_for_selector("#artifact-dialog[open] svg.mindmap .mm-node", timeout=30000)
+        n_nodes = page.locator(".mm-node").count()
+        assert n_nodes >= 20
+        page.locator(".mm-node circle").nth(1).click()           # collapse a branch
+        assert page.locator(".mm-node").count() < n_nodes
+        page.locator(".mm-node text").nth(1).click()             # ask about a node
+        page.wait_for_selector(".msg.user:has-text('Tell me about')", timeout=10000)
+        assert page.locator("#artifacts li").count() == 2
+        assert not errors, errors
+        browser.close()

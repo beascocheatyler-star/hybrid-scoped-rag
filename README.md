@@ -19,7 +19,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 559 tests, all offline
+pytest                            # 583 tests, all offline
 python run.py                     # notebook UI at http://localhost:8000 (classic UI at /classic)
 ```
 
@@ -194,6 +194,9 @@ raising the floor must never make the bot answer *more* questions.
   use a deterministic answerer; a real model needs `eval.run --live`.
 - **Chat privacy is enforced in the repository; login arrives in M8.** In the
   default single-user mode everything belongs to the local user.
+- **Offline Studio output is plain.** Without an LLM, flashcards and quizzes
+  are cited clozes and template questions, and quiz distractors can be weak.
+  PDF export needs `weasyprint`; otherwise you get printable HTML.
 - **Imported legacy sources have no original file.** The pre-M1 JSON store
   never kept uploads, so documents migrated from `corpus.json` can be
   searched and cited, but `GET .../file` returns 404 for them.
@@ -246,6 +249,10 @@ unchanged for existing clients. The v2 API (M1) addresses any notebook:
 | `GET` `POST` `PATCH` `DELETE` | `/api/v2/notebooks/{nb}/notes[/{id}]` | Notes; `POST /api/v2/notes/{id}/convert-to-source` |
 | `GET` `PUT` | `/api/v2/notebooks/{nb}/chat-config` | Goal, style (incl. learning guide), length, language |
 | `GET` | `/api/v2/notebooks/{nb}/overview` | Summary of all sources + suggested questions |
+| `POST` `GET` | `/api/v2/notebooks/{nb}/artifacts` | Studio: report, data table, mind map, flashcards, quiz (a job) / list |
+| `GET` `DELETE` | `/api/v2/artifacts/{id}` | Artifact with content, citations, your study progress, `stale` flag |
+| `GET` | `/api/v2/artifacts/{id}/download?format=` | md, docx, pdf, csv, citations_csv, json, svg |
+| `PATCH` / `POST` | `/api/v2/artifacts/{id}/progress` / `grade` | Flashcard marks / quiz grading (short answers by `MODEL_JUDGE`) |
 
 Answers cite passages as `[n]`. The server drops markers that point at no
 passage, scores how well each cited passage supports its sentence, and marks
@@ -336,7 +343,7 @@ scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
 eval/                  Offline/live eval harness + labelled datasets
-tests/                 559 offline tests (test_invariants.py pins I1–I9)
+tests/                 583 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing

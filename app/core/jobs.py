@@ -215,7 +215,7 @@ class JobQueue:
         except Exception as exc:
             from app.core.notebooks import JobCancelled
 
-            if isinstance(exc, JobCancelled) or ctx.cancelled():
+            if isinstance(exc, (JobCancelled, InterruptedError)) or ctx.cancelled():
                 self._finish(job_id, "cancelled", "Cancelled.")
             else:
                 logger.warning("Job %s (%s) failed: %s", job_id, job.type, exc)

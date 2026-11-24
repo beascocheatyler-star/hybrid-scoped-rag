@@ -10,7 +10,9 @@ from app.config import Settings
 from app.core.db import Database
 from app.core.embedding import Embedder
 from app.core.guide import AUTO_LABEL_MIN, build_guide, compute_labels
+from app.core.artifacts import ArtifactRepo
 from app.core.importer import import_legacy
+from app.core.studio import StudioRefused, generate as studio_generate
 from app.core.overview import build_overview
 from app.core.llm import get_llm
 from app.core.jobs import Job, JobContext, JobQueue
@@ -128,6 +130,41 @@ def build_services(settings: Settings, embedder: Embedder, recover_jobs: bool = 
             get_llm(settings, "studio"))
         return {"updated": store.apply_auto_labels(labels)}
 
+    arts = ArtifactRepo(db)
+
+    def artifact(job: Job, ctx: JobContext) -> Dict:
+        a = arts.get(job.payload["artifact_id"])
+        if a is None:
+            return {"skipped": True}
+        arts.update(a["id"], status="running")
+        store = registry.store(a["notebook_id"])
+        params = {k: v for k, v in a["params"].items() if not k.startswith("_")}
+        try:
+            out = studio_generate(a["type"], params, store, a["params"].get("_selection"), settings,
+                                  get_llm(settings, "studio"), registry.get(a["notebook_id"]).title,
+                                  progress=ctx.progress, cancelled=ctx.cancelled)
+        except StudioRefused as exc:
+            arts.update(a["id"], status="failed", error=str(exc))
+            raise
+        except InterruptedError:
+            arts.update(a["id"], status="cancelled", error="Cancelled.")
+            raise
+        except Exception as exc:
+            arts.update(a["id"], status="failed", error=str(exc) or exc.__class__.__name__)
+            raise
+        if ctx.cancelled():
+            arts.update(a["id"], status="cancelled", error="Cancelled.")
+            raise InterruptedError()
+        content = out["content"]
+        content["_passage_chunk_ids"] = out["passage_chunk_ids"]
+        sel = a["params"].get("_selection")
+        ready = sorted(d.doc_id for d in store.list_documents())
+        content["_snapshot_ids"] = ready if sel is None else sorted(x for x in sel if x in ready)
+        arts.update(a["id"], status="ready", content=content, prompt_used=out["prompt_used"],
+                    source_ids=out["source_ids"], generated_by=out["generated_by"], error="")
+        return {"artifact_id": a["id"], "generated_by": out["generated_by"]}
+
+    jobs.register("artifact", artifact)
     jobs.register("ingest", ingest)
     jobs.register("guide", guide)
     jobs.register("autolabel", autolabel)

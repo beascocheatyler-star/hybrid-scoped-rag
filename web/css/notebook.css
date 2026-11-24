@@ -188,3 +188,32 @@ dialog input[type=text], dialog input[type=url], dialog textarea { width: 100%; 
   #panel-sources, #panel-studio { display: none; }
   #notebook[data-tab="sources"] #panel-sources, #notebook[data-tab="studio"] #panel-studio { display: block; }
 }
+
+/* studio viewers */
+.artifact-dialog { width: min(980px, 96vw); max-height: 92vh; padding: 14px 18px; }
+.artifact-dialog[open] { display: flex; flex-direction: column; }
+.artifact-tools { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; margin-right: 8px; }
+.artifact-body { overflow: auto; flex: 1; min-height: 200px; }
+.artifact-body h3 { font-size: 16px; }
+.artifact-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--surface-2); flex-wrap: wrap; }
+.artifact-row .linklike { flex: 1; min-width: 0; font-size: 14px; }
+.badge.stale { background: var(--warn-soft); color: var(--warn); }
+.data-table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.data-table th, .data-table td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+.mindmap { width: 100%; height: 62vh; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); cursor: grab; }
+.mindmap text { fill: var(--text); font: 12px var(--font); cursor: pointer; }
+.mindmap .mm-node circle { fill: var(--accent); }
+.mindmap .mm-node.collapsed circle { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+.mindmap .mm-node:focus { outline: none; } .mindmap .mm-node:focus text { text-decoration: underline; }
+.mindmap path { fill: none; stroke: var(--muted); stroke-opacity: .6; }
+.flashcard { min-height: 200px; border: 1px solid var(--border); border-radius: 12px; padding: 24px; font-size: 18px;
+  background: var(--surface); display: flex; align-items: center; justify-content: center; text-align: center; cursor: pointer; }
+.flashcard.back { background: var(--accent-soft); }
+.study-bar { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 12px 0; flex-wrap: wrap; }
+.quiz-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.quiz-item fieldset { border: 0; padding: 0; margin: 6px 0; }
+.quiz-item.correct { border-color: var(--ok); } .quiz-item.incorrect { border-color: var(--danger); }
+.quiz-feedback { font-size: 14px; margin-top: 6px; }
+.field { margin-bottom: 8px; } .field select, .field input[type=text] { width: 100%; font: inherit; padding: 6px 8px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+.field fieldset { border: 0; padding: 0; margin: 0; }

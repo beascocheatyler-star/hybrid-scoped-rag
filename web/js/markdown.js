@@ -265,7 +265,41 @@ function renderHighlighted(text, start, end) {
     "</mark>" + escapeHtml(t.slice(b));
 }
 
+// ---------------------------------------------------------------------------
+// Studio
+// ---------------------------------------------------------------------------
+
+// Data table with per-cell citation chips. Cell text is escaped; chips come
+// from citationChips over digit-only markers.
+function renderDataTable(content) {
+  var cols = (content && content.columns) || [];
+  var head = "<thead><tr>" + cols.map(function (c) { return '<th scope="col">' + escapeHtml(c) + "</th>"; }).join("") + "</tr></thead>";
+  var body = ((content && content.rows) || []).map(function (r) {
+    return "<tr>" + (r.cells || []).map(function (c) {
+      var marks = (c.citations || []).map(function (x) { return "[" + parseInt(x.marker, 10) + "]"; }).join("");
+      return "<td>" + escapeHtml(c.text || "") + (marks ? " " + citationChips(marks, c.citations) : "") + "</td>";
+    }).join("") + "</tr>";
+  }).join("");
+  return '<table class="data-table">' + head + "<tbody>" + body + "</tbody></table>";
+}
+
+// A flashcard or quiz text block: inline markdown on escaped text, plus chips.
+function renderStudyText(text, citations) {
+  var marks = (citations || []).map(function (x) { return "[" + parseInt(x.marker, 10) + "]"; }).join("");
+  return inline(escapeHtml(String(text == null ? "" : text).replace(/\u0000/g, ""))) +
+    (marks ? " " + citationChips(marks, citations) : "");
+}
+
+// Mind-map labels are drawn with SVG textContent (never innerHTML); this only
+// normalises and truncates, and is exercised by the harness for safety.
+function mindMapLabel(label, max) {
+  var t = String(label == null ? "" : label).replace(/\s+/g, " ").trim();
+  var m = max || 42;
+  return t.length > m ? t.slice(0, m - 1) + "…" : t;
+}
+
 export {
   escapeHtml, renderMarkdown, inline, citationChips, renderAnswer, renderCitationCard,
-  renderNote, renderHighlighted, formatMs, locationLabel
+  renderNote, renderHighlighted, formatMs, locationLabel, renderDataTable, renderStudyText,
+  mindMapLabel
 };

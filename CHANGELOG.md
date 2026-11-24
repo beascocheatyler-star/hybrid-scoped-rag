@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased — M6: Studio artifacts and study tools
+
+### Added
+- Studio artifacts as cancellable jobs: report (briefing, study guide, FAQ,
+  timeline, blog post, custom), data table, mind map, flashcards, quiz. Only
+  the selected sources are used (I1); an off-topic focus is refused by the
+  gate before any LLM call (I5); every prompt carries the untrusted-data rule
+  (I7). Items without a valid citation are dropped.
+- LLM generation via JSON schema with deterministic offline generators as the
+  fallback; pydantic validation; mind-map bounds (20–80 nodes, depth ≤ 4).
+- Exports: md, docx, pdf (weasyprint or HTML fallback), csv plus a citations
+  sheet, json, svg.
+- Quiz grading (exact; short answers by `MODEL_JUDGE` or lexical fallback);
+  per-user study progress with retake all/missed (migration 004).
+- `stale` flag when the source set changes; notebook copy carries artifacts
+  with remapped ids.
+- Studio UI: generator cards, customise dialog, viewers for every type
+  (collapsible, zoomable SVG mind map whose nodes ask the chat), flashcard and
+  quiz study modes, downloads.
+- Renderer harness: data table, study text, mind-map labels, detector
+  self-tests (41 checks); Playwright Studio flow.
+
+
 ## Unreleased — M5: notebook UI
 
 ### Added

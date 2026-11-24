@@ -9,6 +9,7 @@ exist. In SINGLE_USER_MODE (the default) the caller is always the built-in
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -18,7 +19,22 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings
 from app.core.chats import LENGTHS, STYLES, ChatConfig, ChatRepo, preset_config
+from app.core.artifacts import ArtifactRepo
 from app.core.engine import ChatEngine
+from app.core.llm import get_llm
+from app.core.studio import (
+    QUIZ_TYPES,
+    REPORT_FORMATS,
+    TYPES as STUDIO_TYPES,
+    citations_csv as studio_cites_csv,
+    grade as studio_grade,
+    mind_map_svg as studio_svg,
+    to_csv as studio_csv,
+    to_docx as studio_docx,
+    to_html as studio_html,
+    to_markdown as studio_md,
+    to_pdf as studio_pdf,
+)
 from app.core.extract import SUPPORTED_EXTENSIONS
 from app.core.fetch import FetchError
 from app.core.guard import classify
@@ -185,6 +201,24 @@ class ChatConfigIn(BaseModel):
     name: str = Field(default="Notebook assistant", max_length=80)
 
 
+class ArtifactIn(BaseModel):
+    type: str = Field(description="report | data_table | mind_map | flashcards | quiz")
+    params: Dict[str, Any] = Field(default_factory=dict)
+    source_ids: Optional[List[str]] = None
+    title: str = Field(default="", max_length=200)
+
+
+class ProgressIn(BaseModel):
+    item_id: str = Field(max_length=64)
+    state: str = Field(description="flashcards: got_it | missed; quiz: correct | incorrect; or 'reset'")
+    only: Optional[str] = Field(default=None, description="with state=reset: clear only items in this state")
+
+
+class GradeIn(BaseModel):
+    item_id: str = Field(max_length=64)
+    answer: Any = None
+
+
 # --------------------------------------------------------------------------
 # Router
 # --------------------------------------------------------------------------
@@ -196,6 +230,7 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
     jobs = services.jobs
     db = services.db
     chats = ChatRepo(db)
+    arts = ArtifactRepo(db)
 
     def current_user() -> str:
         # M8 replaces this with session auth when SINGLE_USER_MODE=false.
@@ -739,5 +774,143 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
         if wait:
             jobs.wait(job.id, timeout=300)
         return AddSourcesOut(queued=[QueuedSource(job_id=job.id, source_id=src.id, name=src.title)], skipped=[])
+
+    # --- studio artifacts ----------------------------------------------------
+
+    def artifact_or_404(artifact_id: str):
+        a = arts.get(artifact_id)
+        if a is None or not can_access(a["notebook_id"], current_user()):
+            raise HTTPException(status_code=404, detail="Artifact not found.")
+        return a
+
+    def is_stale(a, store) -> bool:
+        """The source set this artifact was generated over has changed: a
+        selected source was removed, or (for 'all sources') sources were
+        added or removed. Artifacts never change; the badge just says so."""
+        if a["status"] != "ready":
+            return False
+        snap = set((a.get("content") or {}).get("_snapshot_ids") or [])
+        ready = {d.doc_id for d in store.list_documents()}
+        if a["params"].get("_selection") is None:
+            return snap != ready
+        return not snap <= ready
+
+    def artifact_out(a, full: bool) -> Dict[str, Any]:
+        store = registry.store(a["notebook_id"])
+        out = {k: a[k] for k in ("id", "notebook_id", "type", "title", "status", "error", "generated_by",
+                                 "source_ids", "job_id", "created_at", "updated_at")}
+        out["params"] = {k: v for k, v in a["params"].items() if not k.startswith("_")}
+        out["selection"] = a["params"].get("_selection")
+        out["stale"] = is_stale(a, store)
+        content = a.get("content") or {}
+        out["item_count"] = len(content.get("cards") or content.get("items") or content.get("rows")
+                                or content.get("sections") or [])
+        if full:
+            out["content"] = {k: v for k, v in content.items() if not k.startswith("_")}
+            out["dropped_unsupported_items"] = content.get("_dropped_unsupported_items", 0)
+            out["prompt_used"] = a.get("prompt_used", "")
+            out["progress"] = arts.progress(a["id"], current_user())
+        return out
+
+    @r.post("/notebooks/{nb_id}/artifacts", status_code=202)
+    def create_artifact(nb_id: str, body: ArtifactIn) -> Dict[str, Any]:
+        store = notebook_store(nb_id)
+        if body.type not in STUDIO_TYPES:
+            raise HTTPException(status_code=400, detail="type must be one of {}".format(STUDIO_TYPES))
+        p = body.params
+        if body.type == "report" and p.get("format", "briefing") not in REPORT_FORMATS:
+            raise HTTPException(status_code=400, detail="format must be one of {}".format(REPORT_FORMATS))
+        if p.get("quantity", "standard") not in ("fewer", "standard", "more"):
+            raise HTTPException(status_code=400, detail="quantity must be fewer, standard or more")
+        if body.type == "quiz" and any(t not in QUIZ_TYPES for t in p.get("types") or []):
+            raise HTTPException(status_code=400, detail="quiz types must be among {}".format(QUIZ_TYPES))
+        if body.source_ids is not None:
+            known = {x.id for x in store.list_sources() if x.status == "ready"}
+            bad = [x for x in body.source_ids if x not in known]
+            if bad or not body.source_ids:
+                raise HTTPException(status_code=400, detail="Unknown or unready source ids: {}".format(bad))
+        title = body.title or {"report": "Report", "data_table": "Data table", "mind_map": "Mind map",
+                               "flashcards": "Flashcards", "quiz": "Quiz"}[body.type]
+        a = arts.create(nb_id, current_user(), body.type, p, title, body.source_ids)
+        job = jobs.enqueue("artifact", {"artifact_id": a["id"]}, notebook_id=nb_id)
+        arts.set_job(a["id"], job.id)
+        return {"artifact": artifact_out(arts.get(a["id"]), False), "job_id": job.id}
+
+    @r.get("/notebooks/{nb_id}/artifacts")
+    def list_artifacts(nb_id: str) -> List[Dict[str, Any]]:
+        notebook_store(nb_id)
+        return [artifact_out(a, False) for a in arts.list(nb_id)]
+
+    @r.get("/artifacts/{artifact_id}")
+    def get_artifact(artifact_id: str) -> Dict[str, Any]:
+        return artifact_out(artifact_or_404(artifact_id), True)
+
+    @r.delete("/artifacts/{artifact_id}", status_code=204)
+    def delete_artifact(artifact_id: str) -> Response:
+        artifact_or_404(artifact_id)
+        arts.delete(artifact_id)
+        return Response(status_code=204)
+
+    @r.patch("/artifacts/{artifact_id}/progress")
+    def artifact_progress(artifact_id: str, body: ProgressIn) -> Dict[str, Any]:
+        a = artifact_or_404(artifact_id)
+        if body.state == "reset":
+            arts.reset_progress(artifact_id, current_user(), body.only)
+        elif body.state in ("got_it", "missed", "correct", "incorrect"):
+            arts.set_progress(artifact_id, current_user(), body.item_id, body.state)
+        else:
+            raise HTTPException(status_code=400, detail="Unknown state.")
+        return {"progress": arts.progress(a["id"], current_user())}
+
+    @r.post("/artifacts/{artifact_id}/grade")
+    def grade_item(artifact_id: str, body: GradeIn) -> Dict[str, Any]:
+        a = artifact_or_404(artifact_id)
+        if a["type"] != "quiz" or a["status"] != "ready":
+            raise HTTPException(status_code=400, detail="Only ready quizzes can be graded.")
+        item = next((i for i in a["content"].get("items", []) if i["id"] == body.item_id), None)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Quiz item not found.")
+        store = registry.store(a["notebook_id"])
+        passage_txt = "\n\n".join((store.chunk_row(c["chunk_id"]) or {"text": ""})["text"]
+                                   for c in item["citations"])
+        llm = get_llm(settings, "judge") if item["type"] == "short_answer" else None
+        res = studio_grade(item, body.answer, passage_txt, llm)
+        arts.set_progress(artifact_id, current_user(), body.item_id,
+                          "correct" if res["correct"] else "incorrect",
+                          body.answer if isinstance(body.answer, str) else json.dumps(body.answer))
+        return res
+
+    @r.get("/artifacts/{artifact_id}/download")
+    def download_artifact(artifact_id: str, format: str = Query("md")):
+        a = artifact_or_404(artifact_id)
+        if a["status"] != "ready":
+            raise HTTPException(status_code=409, detail="Artifact is {}.".format(a["status"]))
+        content = {k: v for k, v in a["content"].items() if not k.startswith("_")}
+        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", a["title"]).strip("_") or a["type"]
+        md = studio_md(a["type"], content)
+
+        def send(data, media, ext, extra=None):
+            headers = {"Content-Disposition": 'attachment; filename="{}.{}"'.format(stem, ext)}
+            headers.update(extra or {})
+            return Response(content=data, media_type=media, headers=headers)
+
+        if format == "md":
+            return send(md, "text/markdown; charset=utf-8", "md")
+        if format == "json":
+            return send(json.dumps(content, ensure_ascii=False, indent=2), "application/json", "json")
+        if format == "docx":
+            return send(studio_docx(md), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx")
+        if format == "pdf":
+            pdf = studio_pdf(md, a["title"])
+            if pdf is None:  # weasyprint not installed: printable HTML instead
+                return send(studio_html(md, a["title"]), "text/html; charset=utf-8", "html",
+                            {"X-Export-Fallback": "html (install weasyprint for PDF)"})
+            return send(pdf, "application/pdf", "pdf")
+        if format in ("csv", "citations_csv") and a["type"] == "data_table":
+            data = studio_csv(content) if format == "csv" else studio_cites_csv(content)
+            return send(data, "text/csv; charset=utf-8", "csv" if format == "csv" else "citations.csv")
+        if format == "svg" and a["type"] == "mind_map":
+            return send(studio_svg(content), "image/svg+xml", "svg")
+        raise HTTPException(status_code=400, detail="Format {!r} is not available for a {}.".format(format, a["type"]))
 
     return r

@@ -127,6 +127,26 @@
     </form>
   </dialog>
 
+  <!-- Studio: customise + viewer -->
+  <dialog id="studio-dialog" aria-labelledby="studio-title">
+    <form method="dialog" id="studio-form">
+      <h2 id="studio-title">Generate</h2>
+      <div id="studio-fields"></div>
+      <p id="studio-status" class="status" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" id="studio-cancel" class="btn ghost">Cancel</button>
+        <button type="button" id="studio-go" class="btn primary">Generate</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="artifact-dialog" class="artifact-dialog" aria-labelledby="artifact-title">
+    <div class="drawer-head">
+      <h2 id="artifact-title">Output</h2>
+      <div class="artifact-tools" id="artifact-tools"></div>
+      <button type="button" id="artifact-close" class="btn ghost" aria-label="Close">✕</button>
+    </div>
+    <div id="artifact-body" class="artifact-body"></div>
+  </dialog>
   <div id="cite-card" class="cite-card" role="tooltip" hidden></div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 

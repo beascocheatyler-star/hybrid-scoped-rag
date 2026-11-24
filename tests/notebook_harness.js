@@ -13,13 +13,23 @@ function noRawTags(html) {
   var re = /<\/?([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g, m;
   while ((m = re.exec(html))) {
     if (!allowed.test(m[1].toLowerCase())) return false;
-    if (/\son[a-z]+\s*=/i.test(m[2]) || /javascript:/i.test(m[2])) return false;
+    // Attribute values are quoted by the renderers; check names outside quotes.
+    var names = m[2].replace(/"[^"]*"/g, '""');
+    if (/["']/.test(names.replace(/""/g, ""))) return false;  // stray quote = breakout
+    if (/\son[a-z]+\s*=/i.test(names) || /href=""/.test(names) && /javascript:/i.test(m[2])) return false;
   }
   return true;
 }
 var CITES = [{marker: 1, source_title: "syllabus.md", quote: "Exam is Feb 18.", weak: false, page: 2},
              {marker: 2, source_title: "<img src=x onerror=alert(1)>", quote: "<script>alert(1)</script>", weak: true,
               section_path: "<b>Grading</b>", t_start_ms: 65000}];
+
+print("\ndetector self-test");
+ok("detects event handler", !noRawTags('<p onclick="x">a</p>'));
+ok("detects unquoted handler", !noRawTags('<button onmouseover=alert(1)>a</button>'));
+ok("detects attribute breakout", !noRawTags('<button aria-label="a" " onclick="x">b</button>'));
+ok("detects foreign tag", !noRawTags('<p>a</p><script>x</script>'));
+ok("allows escaped text in attribute", noRawTags('<button aria-label="&lt;img onerror=x&gt;">1</button>'));
 
 print("\ncitation chips");
 var h = citationChips("Fact [1]. Other [2][9].", CITES);
@@ -67,6 +77,20 @@ ok("highlight escapes outside segments", renderHighlighted("<a>x<b>", 3, 4).inde
 ok("out-of-range clamps", renderHighlighted("abc", -5, 99).indexOf("<mark") >= 0);
 ok("no span -> plain escaped", renderHighlighted("<x>", null, null) === "&lt;x&gt;");
 ok("inverted span -> plain", renderHighlighted("abc", 2, 1) === "abc");
+
+
+print("\nstudio renderers");
+var tbl = renderDataTable({columns: ["Source", "<b>col</b>"], rows: [{cells: [
+  {text: "<img src=x onerror=alert(1)>", citations: [CITES[0]]}, {text: "plain", citations: []}]}]});
+ok("data table escapes headers and cells", noRawTags(tbl) && tbl.indexOf("&lt;b&gt;col") >= 0 && tbl.indexOf("&lt;img") >= 0, tbl);
+ok("data table cell chips", tbl.indexOf('data-marker="1"') >= 0, tbl);
+ok("data table empty safe", renderDataTable(null).indexOf("<table") === 0);
+var st = renderStudyText("Front with <script>x</script> and **bold**", [CITES[1]]);
+ok("study text escaped with chips", noRawTags(st) && st.indexOf("<strong>bold</strong>") >= 0 && st.indexOf('data-marker="2"') >= 0, st);
+var forgedCite = renderStudyText("x", [{marker: '1" onclick="alert(1)', source_title: "t"}]);
+ok("non-numeric marker cannot inject", noRawTags(forgedCite), forgedCite);
+ok("mind map label truncates", mindMapLabel("a ".repeat(60)).length <= 42);
+ok("mind map label is plain text", mindMapLabel("<svg onload=x>") === "<svg onload=x>");
 
 print("\nformatting");
 ok("formatMs minutes", formatMs(65000) === "1:05");

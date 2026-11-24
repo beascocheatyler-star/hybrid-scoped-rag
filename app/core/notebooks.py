@@ -740,8 +740,7 @@ class NotebookRegistry:
              owner_id: str = LOCAL_USER_ID) -> Notebook:
         """Copy a notebook's ready sources (rows, chunks, vectors, originals).
 
-        Chats and notes are not copied, matching NotebookLM. Artifacts arrive in
-        M6 and will be copied then.
+        Chats and notes are not copied, matching NotebookLM; ready artifacts are.
         """
         src_nb = self.get(nb_id)
         new = self.create(title or "Copy of {}".format(src_nb.title),
@@ -753,8 +752,10 @@ class NotebookRegistry:
         sources = self.db.all(
             "SELECT * FROM sources WHERE notebook_id = ? AND status = 'ready'", (nb_id,)
         )
+        sid_map: Dict[str, str] = {}
         for s in sources:
             new_sid = uuid.uuid4().hex[:12]
+            sid_map[s["id"]] = new_sid
             old_dir = self.data_dir / "notebooks" / nb_id / "sources" / s["id"]
             new_dir = self.data_dir / "notebooks" / new.id / "sources" / new_sid
             with self.db.tx() as c:
@@ -791,7 +792,23 @@ class NotebookRegistry:
                     )
             if old_dir.exists():
                 shutil.copytree(old_dir, new_dir)
+        self._copy_artifacts(nb_id, new.id, owner_id, sid_map)
         return self.get(new.id)
+
+    def _copy_artifacts(self, old_nb: str, new_nb: str, owner_id: str, sid_map: Dict[str, str]) -> None:
+        """Ready artifacts travel with a copy (as in NotebookLM); source and
+        chunk ids inside them are remapped to the copied sources."""
+        rows = self.db.all("SELECT * FROM artifacts WHERE notebook_id = ? AND status = 'ready'", (old_nb,))
+        for a in rows:
+            def remap(text: str) -> str:
+                for old, new in sid_map.items():
+                    text = text.replace(old, new)
+                return text
+            self.db.execute(
+                "INSERT INTO artifacts(id, notebook_id, created_by, type, title, params_json, status, "
+                "prompt_used, content_json, source_ids_json, generated_by) VALUES (?,?,?,?,?,?, 'ready', ?,?,?,?)",
+                (uuid.uuid4().hex[:16], new_nb, owner_id, a["type"], a["title"], remap(a["params_json"]),
+                 a["prompt_used"], remap(a["content_json"]), remap(a["source_ids_json"]), a["generated_by"]))
 
     # --- stores ----------------------------------------------------------
 

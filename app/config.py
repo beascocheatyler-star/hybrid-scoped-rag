@@ -91,12 +91,23 @@ class Settings:
     # Dense similarity at or above which a question failing the lexical gate is
     # promoted to borderline rather than refused. Set to 1.0 to disable.
     dense_rescue_floor: float = field(
-        default_factory=lambda: _env_float("DENSE_RESCUE_FLOOR", 0.25)
+        default_factory=lambda: _env_float("DENSE_RESCUE_FLOOR", 0.36)
     )
 
     # --- Storage ---
     data_dir: Path = field(
         default_factory=lambda: Path(os.getenv("DATA_DIR", str(REPO_ROOT / "data")))
+    )
+
+    # --- Notebooks / jobs (M1) ---
+    # Every request acts as the built-in "local" user; no login. Multi-user
+    # auth arrives in M8 and is opt-in by setting this to false.
+    single_user_mode: bool = field(
+        default_factory=lambda: _env_bool("SINGLE_USER_MODE", True)
+    )
+    job_workers: int = field(default_factory=lambda: _env_int("JOB_WORKERS", 2))
+    max_sources_per_notebook: int = field(
+        default_factory=lambda: _env_int("MAX_SOURCES_PER_NOTEBOOK", 50)
     )
 
     # --- Upload limits ---
@@ -105,6 +116,10 @@ class Settings:
     # --- Behaviour ---
     # When True, the bot refuses anything not grounded in the uploaded corpus.
     strict_scope: bool = field(default_factory=lambda: _env_bool("STRICT_SCOPE", True))
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "hsr.sqlite3"
 
     @property
     def max_upload_bytes(self) -> int:

@@ -121,7 +121,8 @@ def test_upload_indexes_a_document(client):
 def test_upload_rejects_an_unsupported_type(client):
     response = client.post(
         "/api/documents",
-        files={"files": ("photo.png", b"\x89PNG\r\n\x1a\n", "image/png")},
+        # M2 made images a supported source (OCR); .exe is still unsupported.
+        files={"files": ("tool.exe", b"MZ\x90\x00", "application/octet-stream")},
     )
     assert response.status_code == 400
     assert "Unsupported file type" in response.json()["detail"]

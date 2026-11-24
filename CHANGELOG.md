@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased — M2: anchored ingestion and new source types
+
+### Added
+- Anchored chunks: every chunk stores `start_char`/`end_char` into the stored
+  extracted text (`text[start:end] == chunk`), plus `page` (PDF), `slide`
+  (PPTX), `t_start_ms`/`t_end_ms` (audio, YouTube) and `section_path`
+  (Markdown, DOCX, EPUB and HTML headings). Chunking decisions are unchanged
+  (same words per chunk), so retrieval and every eval metric are identical.
+- Structured extraction (`extract_doc`): PDF per-page text with offsets
+  (no more inline `[page N]` markers), DOCX headings, Markdown headings.
+- New source kinds: URL (SSRF-guarded fetch, optional trafilatura), YouTube
+  transcripts, pasted text, audio (faster-whisper or an OpenAI-compatible
+  STT endpoint), images (Tesseract OCR), scanned-PDF OCR fallback, PPTX
+  (slides and speaker notes), EPUB, HTML. PPTX/EPUB/HTML need no extra package.
+- Limits: `MAX_UPLOAD_MB=200`, `MAX_SOURCE_WORDS=500000`.
+- Source Guides (summary with passage citations, topics, questions), as a job
+  after each ingest: LLM map-reduce when configured, deterministic extractive
+  fallback otherwise. Hallucinated citation markers are dropped.
+- Auto-labels at 5 or more sources, written to metadata `label` (so they
+  become facet chips); a label the user edited is never overwritten.
+- `app/core/llm.py`: `LLMClient` protocol with Anthropic (default; structured
+  JSON via `output_config.format`, streaming, server-side refusal fallback)
+  and OpenAI-compatible (Ollama, vLLM, ...) implementations; per-task models.
+- `GET .../sources/{id}/content?highlight=<chunk_id>` returns anchors.
+- `requirements-extras.txt`; `hypothesis` dev dependency with property tests.
+
+### Changed
+- Default `MODEL` is now `claude-opus-5-5` (effort `medium`).
+- Two legacy tests used `.png` as an example of an unsupported file type;
+  images are now supported, so they use `.exe` instead. These are the only
+  legacy-test adaptations.
+
+
 ## Unreleased — M1: SQLite storage, notebooks, originals, jobs
 
 ### Added

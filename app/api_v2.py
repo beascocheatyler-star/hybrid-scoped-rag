@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings
 from app.core.extract import SUPPORTED_EXTENSIONS
+from app.core.fetch import FetchError
 from app.core.guard import classify
 from app.core.metadata import InvalidFilterError, ScopeFilter
 from app.core.notebooks import (
@@ -82,6 +83,7 @@ class SourceOut(BaseModel):
     created_at: str
     updated_at: str
     has_original: bool
+    guide: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SourcePatch(BaseModel):
@@ -90,9 +92,10 @@ class SourcePatch(BaseModel):
 
 
 class TextSourceIn(BaseModel):
-    kind: str = Field(description="'text' in M1; 'url' and 'youtube' arrive in M2.")
-    title: str = Field(default="Pasted text", max_length=200)
+    kind: str = Field(description="'text', 'url' or 'youtube'.")
+    title: str = Field(default="", max_length=200)
     text: str = Field(default="", max_length=5_000_000)
+    url: str = Field(default="", max_length=4000)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -250,18 +253,31 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
                 body = TextSourceIn(**(await request.json()))
             except Exception as exc:
                 raise HTTPException(status_code=422, detail=str(exc))
+            if body.kind in ("url", "youtube"):
+                if not body.url.strip():
+                    raise HTTPException(status_code=400, detail="url must not be empty.")
+                try:
+                    src = store.create_remote_source(body.kind, body.url, body.title, body.metadata)
+                except FetchError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
+                except (DuplicateDocumentError, SourceLimitError, InvalidFilterError, ValueError) as exc:
+                    raise HTTPException(status_code=409 if isinstance(exc, DuplicateDocumentError) else 400,
+                                        detail=str(exc))
+                job = jobs.enqueue("ingest", {"source_id": src.id}, notebook_id=nb_id)
+                if wait:
+                    jobs.wait(job.id, timeout=300)
+                return AddSourcesOut(queued=[QueuedSource(job_id=job.id, source_id=src.id, name=src.title)],
+                                     skipped=[])
             if body.kind != "text":
-                raise HTTPException(
-                    status_code=400,
-                    detail="Source kind {!r} is not supported yet (M2 adds url and "
-                           "youtube).".format(body.kind),
-                )
+                raise HTTPException(status_code=400,
+                                    detail="Unknown source kind {!r}.".format(body.kind))
             if not body.text.strip():
                 raise HTTPException(status_code=400, detail="text must not be empty.")
-            name = Path(body.title).name or "Pasted text"
+            title = body.title or "Pasted text"
+            name = Path(title).name or "Pasted text"
             items.append((name + ".txt" if not name.endswith(".txt") else name,
                           body.text.encode("utf-8"), body.metadata, "text", "text/plain",
-                          body.title))
+                          title))
         elif ctype.startswith("multipart/form-data"):
             form = await request.form()
             meta: Dict[str, Any] = {}
@@ -328,12 +344,30 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
         return SourceOut(**get_src(notebook_store(nb_id), source_id).to_dict())
 
     @r.get("/notebooks/{nb_id}/sources/{source_id}/content")
-    def source_content(nb_id: str, source_id: str) -> Dict[str, Any]:
+    def source_content(nb_id: str, source_id: str,
+                       highlight: Optional[str] = Query(None, description="chunk id to highlight")
+                       ) -> Dict[str, Any]:
+        """Extracted text plus chunk anchors. With ``highlight``, also returns
+        that chunk's span so the viewer can scroll to and mark it."""
         store = notebook_store(nb_id)
         src = get_src(store, source_id)
         if src.status != "ready":
             raise HTTPException(status_code=409, detail="Source is {}.".format(src.status))
-        return {"source_id": src.id, "title": src.title, "text": store.extracted_text(src.id) or ""}
+        chunks = store.source_chunks(src.id)
+        out: Dict[str, Any] = {
+            "source_id": src.id, "title": src.title, "kind": src.kind, "uri": src.uri,
+            "text": store.extracted_text(src.id) or "",
+            "anchors": [{k: c[k] for k in ("id", "position", "start_char", "end_char", "page",
+                                            "slide", "t_start_ms", "t_end_ms", "section_path")}
+                        for c in chunks],
+            "highlight": None,
+        }
+        if highlight:
+            hit = next((a for a in out["anchors"] if a["id"] == highlight), None)
+            if hit is None:
+                raise HTTPException(status_code=404, detail="Chunk not found in this source.")
+            out["highlight"] = hit
+        return out
 
     @r.get("/notebooks/{nb_id}/sources/{source_id}/file")
     def source_file(nb_id: str, source_id: str):

@@ -23,10 +23,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from app.core.chunking import chunk_text
+from app.core.chunking import chunk_spans
 from app.core.db import Database, pack_vector, unpack_vector, utcnow
 from app.core.embedding import Embedder
-from app.core.extract import extract
+from app.core.extract import ExtractionError, extract_doc, kind_for
+from app.core.fetch import check_url, fetch_bytes, page_to_doc, youtube_doc, youtube_id
 from app.core.metadata import ScopeFilter, collect_facets, normalize_metadata
 from app.core.retrieval import RRF_K_DEFAULT, Chunk, HybridIndex
 from app.core.store import Document, DuplicateDocumentError
@@ -96,6 +97,7 @@ class Source:
     created_at: str
     updated_at: str
     has_original: bool = False
+    guide: Dict = field(default_factory=dict)
 
     def to_dict(self) -> Dict:
         return asdict(self)
@@ -114,6 +116,10 @@ class Source:
             meta = json.loads(row["metadata_json"] or "{}")
         except ValueError:
             meta = {}
+        try:
+            guide = json.loads(row["guide_json"] or "{}")
+        except ValueError:
+            guide = {}
         keys = row.keys()
         return cls(
             id=row["id"], notebook_id=row["notebook_id"], kind=row["kind"],
@@ -123,6 +129,7 @@ class Source:
             char_count=row["char_count"], chunk_count=row["chunk_count"],
             created_at=row["created_at"], updated_at=row["updated_at"],
             has_original=bool(row["file_path"]) if "file_path" in keys else False,
+            guide=guide,
         )
 
 
@@ -147,6 +154,7 @@ class NotebookStore:
         lexical_weight: float = 1.0,
         dense_weight: float = 1.0,
         max_sources: int = 50,
+        max_source_words: int = 500_000,
     ):
         self.db = db
         self.notebook_id = notebook_id
@@ -155,6 +163,7 @@ class NotebookStore:
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.max_sources = max_sources
+        self.max_source_words = max_source_words
         self.index = HybridIndex(
             embedder=embedder, rrf_k=rrf_k,
             lexical_weight=lexical_weight, dense_weight=dense_weight,
@@ -191,7 +200,8 @@ class NotebookStore:
         ]
         by_id = {s.id: s for s in sources}
         rows = self.db.all(
-            "SELECT c.id, c.source_id, c.position, c.text, v.vector, v.dim "
+            "SELECT c.id, c.source_id, c.position, c.text, c.start_char, c.end_char, "
+            "c.page, c.slide, c.t_start_ms, c.t_end_ms, c.section_path, v.vector, v.dim "
             "FROM chunks c JOIN sources s ON s.id = c.source_id "
             "LEFT JOIN chunk_vectors v ON v.chunk_id = c.id AND v.embedder_signature = ? "
             "WHERE c.notebook_id = ? AND s.status = 'ready' "
@@ -210,6 +220,9 @@ class NotebookStore:
                 chunk_id=r["id"], doc_id=src.id, doc_name=src.title,
                 position=r["position"], text=r["text"],
                 metadata=dict(src.metadata), embedding=vec,
+                start_char=r["start_char"], end_char=r["end_char"], page=r["page"],
+                slide=r["slide"], t_start_ms=r["t_start_ms"], t_end_ms=r["t_end_ms"],
+                section_path=r["section_path"],
             ))
         missing = [c for c in chunks if c.embedding is None]
         self.index.add_chunks(chunks)  # embeds any chunk without a vector
@@ -317,6 +330,8 @@ class NotebookStore:
         """
         if kind not in SOURCE_KINDS:
             raise ValueError("Unknown source kind: {}".format(kind))
+        if kind == "file":
+            kind = kind_for(filename)  # 'image' / 'audio' / 'file' 
         clean = normalize_metadata(metadata)
         digest = hashlib.sha256(data).hexdigest()
         safe_name = Path(filename).name or "unnamed"
@@ -337,14 +352,7 @@ class NotebookStore:
             ).fetchone()
             if dup:
                 raise DuplicateDocumentError(Source.from_row(dup).to_document())
-            n = c.execute(
-                "SELECT COUNT(*) FROM sources WHERE notebook_id = ?", (self.notebook_id,)
-            ).fetchone()[0]
-            if self.max_sources and n >= self.max_sources:
-                raise SourceLimitError(
-                    "This notebook already has {} sources; the limit is {} "
-                    "(MAX_SOURCES_PER_NOTEBOOK).".format(n, self.max_sources)
-                )
+            self._check_limit(c)
             path = self.data_dir / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
@@ -394,35 +402,43 @@ class NotebookStore:
         try:
             check()
             self._set_status(source_id, "processing")
-            path = self.original_path(source_id)
-            if path is None:
-                raise FileNotFoundError("The original file for this source is missing.")
-            text = extract(src.original_name, path.read_bytes())
+            doc, title, uri = self._extract(src)
+            words = len(doc.text.split())
+            if self.max_source_words and words > self.max_source_words:
+                raise ExtractionError(
+                    "This source has {:,} words; the limit is {:,} (MAX_SOURCE_WORDS)."
+                    .format(words, self.max_source_words))
             step(0.3)
             check()
-            pieces = chunk_text(text, self.chunk_size, self.overlap)
-            chunks = [
-                Chunk(
+            spans = chunk_spans(doc.text, self.chunk_size, self.overlap)
+            chunks = []
+            for i, sp in enumerate(spans):
+                t0, t1 = doc.time_span(sp.start, sp.end)
+                chunks.append(Chunk(
                     chunk_id="{}-{}".format(source_id, i), doc_id=source_id,
-                    doc_name=src.title, position=i, text=piece,
-                    metadata=dict(src.metadata),
-                )
-                for i, piece in enumerate(pieces)
-            ]
+                    doc_name=title, position=i, text=sp.text,
+                    metadata=dict(src.metadata), start_char=sp.start, end_char=sp.end,
+                    page=doc.page_at(sp.start), slide=doc.slide_at(sp.start),
+                    t_start_ms=t0, t_end_ms=t1, section_path=doc.section_at(sp.start),
+                ))
             vectors = self.embedder.embed_batch([c.text for c in chunks]) if chunks else []
             for ch, v in zip(chunks, vectors):
                 ch.embedding = v
             step(0.8)
             check()
-            (self.source_dir(source_id) / "extracted.txt").write_text(text, "utf-8")
+            sdir = self.source_dir(source_id)
+            sdir.mkdir(parents=True, exist_ok=True)
+            (sdir / "extracted.txt").write_text(doc.text, "utf-8")
             sig = self._embedding_signature
             now = utcnow()
             with self.db.tx() as c:
                 c.executemany(
                     "INSERT INTO chunks(id, source_id, notebook_id, position, text, "
-                    "token_count, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                    "start_char, end_char, page, slide, t_start_ms, t_end_ms, section_path, "
+                    "token_count, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [(ch.chunk_id, source_id, self.notebook_id, ch.position, ch.text,
-                      ch.length, now, now) for ch in chunks],
+                      ch.start_char, ch.end_char, ch.page, ch.slide, ch.t_start_ms,
+                      ch.t_end_ms, ch.section_path, ch.length, now, now) for ch in chunks],
                 )
                 c.executemany(
                     "INSERT INTO chunk_vectors(chunk_id, embedder_signature, dim, vector) "
@@ -432,21 +448,124 @@ class NotebookStore:
                 )
                 c.execute(
                     "UPDATE sources SET status = 'ready', error = '', char_count = ?, "
-                    "chunk_count = ?, updated_at = ? WHERE id = ?",
-                    (len(text), len(chunks), now, source_id),
+                    "chunk_count = ?, title = ?, uri = ?, updated_at = ? WHERE id = ?",
+                    (len(doc.text), len(chunks), title, uri, now, source_id),
                 )
             self.index.add_chunks(chunks)
-            doc = self.get_source(source_id).to_document()  # type: ignore[union-attr]
+            ready = self.get_source(source_id).to_document()  # type: ignore[union-attr]
             with self._lock:
-                self._docs[source_id] = doc
+                self._docs[source_id] = ready
             step(1.0)
-            return doc
+            return ready
         except JobCancelled:
             self._set_status(source_id, "failed", "Cancelled.")
             raise
         except Exception as exc:
             self._set_status(source_id, "failed", str(exc) or exc.__class__.__name__)
             raise
+
+    def _extract(self, src: "Source"):
+        """Return (Extracted, title, uri) for any source kind."""
+        if src.kind in ("url", "youtube"):
+            if src.kind == "youtube":
+                doc = youtube_doc(src.uri)
+                uri = src.uri
+                raw, name = doc.text.encode("utf-8"), "transcript.txt"
+            else:
+                fetched = fetch_bytes(src.uri)
+                doc, uri = page_to_doc(fetched)
+                raw, name = fetched.data, "page.html" if "html" in fetched.content_type else "page.bin"
+            # Keep what was fetched as the source's "original".
+            rel = Path("notebooks") / self.notebook_id / "sources" / src.id / "original" / name
+            (self.data_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.data_dir / rel).write_bytes(raw)
+            self.db.execute(
+                "INSERT OR REPLACE INTO source_files(source_id, path) VALUES (?, ?)",
+                (src.id, rel.as_posix()))
+            title = src.title
+            if doc.title and (not src.title or src.title == src.uri):
+                title = doc.title[:200]
+            return doc, title, uri
+        path = self.original_path(src.id)
+        if path is None:
+            raise FileNotFoundError("The original file for this source is missing.")
+        return extract_doc(src.original_name, path.read_bytes()), src.title, src.uri
+
+    def create_remote_source(self, kind: str, url: str, title: str = "",
+                             metadata: Optional[Dict[str, object]] = None) -> "Source":
+        """Register a url or youtube source. The fetch happens in the job; the
+        URL is validated (SSRF guard) up front so bad input fails fast."""
+        url = url.strip()
+        if kind == "url":
+            check_url(url)
+        elif kind == "youtube":
+            youtube_id(url)
+        else:
+            raise ValueError("Unknown remote kind {!r}".format(kind))
+        clean = normalize_metadata(metadata)
+        digest = hashlib.sha256("{}:{}".format(kind, url).encode()).hexdigest()
+        dup = self.db.one(_SOURCE_SELECT + "WHERE s.notebook_id = ? AND s.sha256 = ?",
+                          (self.notebook_id, digest))
+        if dup and dup["status"] == "failed":
+            self._purge(dup["id"])
+        source_id = uuid.uuid4().hex[:12]
+        with self.db.tx() as c:
+            dup = c.execute(_SOURCE_SELECT + "WHERE s.notebook_id = ? AND s.sha256 = ?",
+                            (self.notebook_id, digest)).fetchone()
+            if dup:
+                raise DuplicateDocumentError(Source.from_row(dup).to_document())
+            self._check_limit(c)
+            c.execute(
+                "INSERT INTO sources(id, notebook_id, kind, title, original_name, sha256, "
+                "uri, status, metadata_json, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?, 'queued', ?, ?, ?)",
+                (source_id, self.notebook_id, kind, (title or url)[:200], "", digest, url,
+                 json.dumps(clean), utcnow(), utcnow()))
+        return self.get_source(source_id)  # type: ignore[return-value]
+
+    def _check_limit(self, c) -> None:
+        n = c.execute("SELECT COUNT(*) FROM sources WHERE notebook_id = ?",
+                      (self.notebook_id,)).fetchone()[0]
+        if self.max_sources and n >= self.max_sources:
+            raise SourceLimitError(
+                "This notebook already has {} sources; the limit is {} "
+                "(MAX_SOURCES_PER_NOTEBOOK).".format(n, self.max_sources))
+
+    def source_chunks(self, source_id: str) -> List[Dict]:
+        return [dict(r) for r in self.db.all(
+            "SELECT id, position, text, start_char, end_char, page, slide, t_start_ms, "
+            "t_end_ms, section_path FROM chunks WHERE source_id = ? AND notebook_id = ? "
+            "ORDER BY position", (source_id, self.notebook_id))]
+
+    def set_guide(self, source_id: str, guide: Dict) -> None:
+        self.db.execute(
+            "UPDATE sources SET guide_json = ?, updated_at = ? WHERE id = ? AND notebook_id = ?",
+            (json.dumps(guide, ensure_ascii=False), utcnow(), source_id, self.notebook_id))
+
+    def apply_auto_labels(self, labels: Dict[str, str]) -> int:
+        """Write metadata["label"] unless the user changed it since the last
+        automatic labelling. Returns the number of sources updated."""
+        changed = 0
+        for src in self.list_sources():
+            new = labels.get(src.id)
+            if not new or src.status != "ready":
+                continue
+            last_auto = src.guide.get("auto_label")
+            current = src.metadata.get("label")
+            if current is not None and current != last_auto:
+                continue  # user-edited label: leave it alone
+            meta = dict(src.metadata)
+            meta["label"] = new
+            doc = self.set_metadata(src.id, meta)
+            guide = dict(src.guide)
+            guide["auto_label"] = doc.metadata.get("label") if doc else new
+            self.set_guide(src.id, guide)
+            changed += 1
+        return changed
+
+    def chunk_row(self, chunk_id: str):
+        return self.db.one(
+            "SELECT * FROM chunks WHERE id = ? AND notebook_id = ?", (chunk_id, self.notebook_id))
 
     def add(
         self, filename: str, data: bytes, metadata: Optional[Dict[str, object]] = None

@@ -19,7 +19,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 481 tests, all offline
+pytest                            # 517 tests, all offline
 python run.py                     # web UI at http://localhost:8000
 ```
 
@@ -179,6 +179,15 @@ raising the floor must never make the bot answer *more* questions.
 - **Search is pure-Python cosine.** Fine for a few thousand chunks; measured
   p95 is 285 ms at 10k chunks (`scripts/bench.py search`). NumPy vectorisation
   is planned for M3, with a target of p95 under 150 ms at 100k chunks.
+- **Some source types need optional installs.** URL pages work with the
+  standard library (better with `trafilatura`); PPTX, EPUB and HTML are parsed
+  with the standard library. YouTube, audio, image OCR and scanned-PDF OCR need
+  the packages in `requirements-extras.txt`; without them the source fails with
+  an explanation. These adapters are tested with fakes, not against the real
+  libraries.
+- **The URL fetcher resolves DNS twice** (once to check, once to connect), so
+  a DNS-rebinding attacker could race it. Private, loopback and link-local
+  targets, and redirects to them, are otherwise refused.
 - **Imported legacy sources have no original file.** The pre-M1 JSON store
   never kept uploads, so documents migrated from `corpus.json` can be
   searched and cited, but `GET .../file` returns 404 for them.
@@ -213,9 +222,9 @@ unchanged for existing clients. The v2 API (M1) addresses any notebook:
 | `GET` `POST` | `/api/v2/notebooks` | List / create notebooks |
 | `GET` `PATCH` `DELETE` | `/api/v2/notebooks/{nb}` | Read / rename / delete |
 | `POST` | `/api/v2/notebooks/{nb}/copy` | Copy sources into a new notebook |
-| `POST` | `/api/v2/notebooks/{nb}/sources` | Add files (multipart) or `{"kind":"text"}`; returns job ids (`?wait=true` blocks) |
+| `POST` | `/api/v2/notebooks/{nb}/sources` | Add files (multipart: txt, md, pdf, docx, pptx, epub, html, csv, json, images, audio) or JSON `{"kind": "text" \| "url" \| "youtube"}`; returns job ids |
 | `GET` | `/api/v2/notebooks/{nb}/sources[/{id}]` | Sources with status (`queued`, `processing`, `ready`, `failed`) |
-| `GET` | `/api/v2/notebooks/{nb}/sources/{id}/content` | Extracted text |
+| `GET` | `/api/v2/notebooks/{nb}/sources/{id}/content?highlight=chunk` | Extracted text, chunk anchors (offsets, page, slide, timestamps, section) |
 | `GET` | `/api/v2/notebooks/{nb}/sources/{id}/file` | The original upload |
 | `PATCH` `DELETE` | `/api/v2/notebooks/{nb}/sources/{id}` | Rename / re-tag / remove |
 | `GET` | `/api/v2/notebooks/{nb}/facets` | Metadata facets for this notebook |
@@ -246,7 +255,10 @@ All optional; every value has a working default.
 | Variable | Default | Meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Only needed to generate answers |
-| `MODEL` | `claude-opus-5` | Generation model |
+| `MODEL` | `claude-opus-5-5` | Generation model (per-task: `MODEL_CHAT`, `MODEL_REWRITE`, `MODEL_STUDIO`, `MODEL_JUDGE`) |
+| `LLM_PROVIDER` | `anthropic` | or `openai` for any OpenAI-compatible server (Ollama, vLLM); set `OPENAI_BASE_URL` |
+| `MAX_UPLOAD_MB` / `MAX_SOURCE_WORDS` | `200` / `500000` | Per-source limits |
+| `SOURCE_GUIDES` | `true` | Summary, topics and questions per source |
 | `EMBEDDING_BACKEND` | `hashing` | or `sentence-transformers` |
 | `EMBEDDING_DIMENSIONS` | `1024` | Hashing embedder width |
 | `RRF_K` | `60` | Fusion smoothing constant |
@@ -297,7 +309,7 @@ scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
 eval/                  Offline/live eval harness + labelled datasets
-tests/                 437 offline tests (test_invariants.py pins I1–I9)
+tests/                 517 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing

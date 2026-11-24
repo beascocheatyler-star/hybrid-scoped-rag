@@ -50,7 +50,19 @@ class Settings:
     anthropic_api_key: str = field(
         default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", "")
     )
-    model: str = field(default_factory=lambda: os.getenv("MODEL", "claude-opus-5"))
+    model: str = field(default_factory=lambda: os.getenv("MODEL", "claude-opus-5-5"))
+    # Per-task models (M2+); each defaults to MODEL when unset.
+    model_chat: str = field(default_factory=lambda: os.getenv("MODEL_CHAT", ""))
+    model_rewrite: str = field(default_factory=lambda: os.getenv("MODEL_REWRITE", ""))
+    model_studio: str = field(default_factory=lambda: os.getenv("MODEL_STUDIO", ""))
+    model_judge: str = field(default_factory=lambda: os.getenv("MODEL_JUDGE", ""))
+    # anthropic (default) | openai  (any OpenAI-compatible server: Ollama, vLLM, ...)
+    llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "anthropic").lower())
+    openai_base_url: str = field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", ""))
+    openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    # Server-side refusal fallback on Anthropic (re-runs a declined request on
+    # a fallback model in the same call). LLM_REFUSAL_FALLBACK=false disables.
+    refusal_fallback: bool = field(default_factory=lambda: _env_bool("LLM_REFUSAL_FALLBACK", True))
     max_tokens: int = field(default_factory=lambda: _env_int("MAX_TOKENS", 2000))
     effort: str = field(default_factory=lambda: os.getenv("EFFORT", "medium"))
 
@@ -106,12 +118,18 @@ class Settings:
         default_factory=lambda: _env_bool("SINGLE_USER_MODE", True)
     )
     job_workers: int = field(default_factory=lambda: _env_int("JOB_WORKERS", 2))
+    # Generate a Source Guide (summary, topics, questions) after each ingest.
+    source_guides: bool = field(default_factory=lambda: _env_bool("SOURCE_GUIDES", True))
     max_sources_per_notebook: int = field(
         default_factory=lambda: _env_int("MAX_SOURCES_PER_NOTEBOOK", 50)
     )
 
     # --- Upload limits ---
-    max_upload_mb: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_MB", 25))
+    max_upload_mb: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_MB", 200))
+    # Per-source cap on extracted words (NotebookLM uses 500k).
+    max_source_words: int = field(
+        default_factory=lambda: _env_int("MAX_SOURCE_WORDS", 500_000)
+    )
 
     # --- Behaviour ---
     # When True, the bot refuses anything not grounded in the uploaded corpus.

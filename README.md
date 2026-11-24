@@ -19,8 +19,8 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 267 tests, all offline
-python run.py                     # web UI at http://localhost:8000
+pytest                            # 583 tests, all offline
+python run.py                     # notebook UI at http://localhost:8000 (classic UI at /classic)
 ```
 
 ---
@@ -145,9 +145,11 @@ in-scope questions    min 0.115  median 0.195  max 0.361
 off-topic questions   min 0.038  median 0.124  max 0.206
 ```
 
-The distributions overlap, so no threshold separates them cleanly. `0.25` sits
-just above the off-topic maximum. A false accept costs one *guarded* LLM call,
-not a wrong answer.
+The distributions overlap, so no threshold separates them cleanly. The floor
+must sit above the off-topic maximum. On the larger 160-question eval set the
+off-topic maximum is 0.356, so the default is `0.36` (`scripts/measure_rescue.py`;
+see `docs/scope-tuning.md`). A false accept costs one *guarded* LLM call, not a
+wrong answer.
 
 Rescue is suppressed when `RELEVANCE_FLOOR` is raised above the confident band:
 raising the floor must never make the bot answer *more* questions.
@@ -167,13 +169,46 @@ raising the floor must never make the bot answer *more* questions.
   (then re-run `measure_hybrid.py`, as the rescue floor wants to be ~0.5).
 - **Off-topic refusal is 8/10, not 10/10** on the bundled set. The two misses
   land in `borderline`, where the model is instructed to verify — not in a
-  confident answer.
-- **Persistence is a JSON file rewritten per upload.** O(n²) bytes to ingest n
-  documents, chosen so a reviewer can open and read the corpus. ~310 ms at 600
-  documents. For thousands, swap in SQLite; `DocumentStore`'s interface would
-  not change.
-- **The index is in-memory.** Single-process. Horizontal scaling would need a
-  shared vector store.
+  confident answer. On the larger 160-question eval set, 15/80 off-topic
+  questions reach the model (13 as `borderline`, 2 as confident `in_scope`) and
+  6/80 answerable ones are refused (`docs/eval-baseline.md`).
+- **The index is in-memory, one per notebook, single-process.** Storage is
+  SQLite (WAL), and each notebook's hybrid index is rebuilt from it lazily.
+  Running several uvicorn workers over one `DATA_DIR` would give each worker
+  its own index, which goes stale when another worker writes. Use one worker.
+- **Large notebooks want NumPy.** With NumPy, search p95 is 2.2 ms at 10k and
+  33 ms at 100k chunks (`scripts/bench.py search`); without it, the pure-Python
+  path is about 285 ms at 10k.
+- **Some source types need optional installs.** URL pages work with the
+  standard library (better with `trafilatura`); PPTX, EPUB and HTML are parsed
+  with the standard library. YouTube, audio, image OCR and scanned-PDF OCR need
+  the packages in `requirements-extras.txt`; without them the source fails with
+  an explanation. These adapters are tested with fakes, not against the real
+  libraries.
+- **The URL fetcher resolves DNS twice** (once to check, once to connect), so
+  a DNS-rebinding attacker could race it. Private, loopback and link-local
+  targets, and redirects to them, are otherwise refused.
+- **Citation checks are lexical plus embedding similarity, not entailment.**
+  A cited passage that shares words with a wrong claim can pass. The optional
+  LLM judge (`CITATION_JUDGE`) is not built yet. The offline citation metrics
+  use a deterministic answerer; a real model needs `eval.run --live`.
+- **Chat privacy is enforced in the repository; login arrives in M8.** In the
+  default single-user mode everything belongs to the local user.
+- **Offline Studio output is plain.** Without an LLM, flashcards and quizzes
+  are cited clozes and template questions, and quiz distractors can be weak.
+  PDF export needs `weasyprint`; otherwise you get printable HTML.
+- **Imported legacy sources have no original file.** The pre-M1 JSON store
+  never kept uploads, so documents migrated from `corpus.json` can be
+  searched and cited, but `GET .../file` returns 404 for them.
+- **Cross-lingual retrieval is weak.** Any script now tokenizes (Chinese,
+  Russian, Arabic, ...), so a question in the same language as the source
+  works. A Spanish question against an English source has non-English recall@6
+  of only 0.27 with hashing, 0.60 with bge-small and 0.67 with
+  multilingual-e5-small (`docs/design/M3.md`).
+- **Semantic recall gain is +8.8 points, short of the +15 target.** Lexical
+  questions are already at 1.000; the ceiling on this set is +16.
+- **Follow-ups use a heuristic.** 17/18 answerable follow-ups pass and 6/7
+  off-topic follow-ups are refused, on a dataset written alongside the detector.
 
 ---
 
@@ -189,6 +224,44 @@ raising the floor must never make the bot answer *more* questions.
 | `POST` | `/api/search` | **Retrieval only — no LLM, no key** |
 | `POST` | `/api/chat` | Ask a scoped question |
 | `GET` | `/api/status` | Config, corpus stats, facets |
+
+The table above is the v1 API. It operates on the **Default notebook** and is
+unchanged for existing clients. The v2 API (M1) addresses any notebook:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` `POST` | `/api/v2/notebooks` | List / create notebooks |
+| `GET` `PATCH` `DELETE` | `/api/v2/notebooks/{nb}` | Read / rename / delete |
+| `POST` | `/api/v2/notebooks/{nb}/copy` | Copy sources into a new notebook |
+| `POST` | `/api/v2/notebooks/{nb}/sources` | Add files (multipart: txt, md, pdf, docx, pptx, epub, html, csv, json, images, audio) or JSON `{"kind": "text" \| "url" \| "youtube"}`; returns job ids |
+| `GET` | `/api/v2/notebooks/{nb}/sources[/{id}]` | Sources with status (`queued`, `processing`, `ready`, `failed`) |
+| `GET` | `/api/v2/notebooks/{nb}/sources/{id}/content?highlight=chunk` | Extracted text, chunk anchors (offsets, page, slide, timestamps, section) |
+| `GET` | `/api/v2/notebooks/{nb}/sources/{id}/file` | The original upload |
+| `PATCH` `DELETE` | `/api/v2/notebooks/{nb}/sources/{id}` | Rename / re-tag / remove |
+| `GET` | `/api/v2/notebooks/{nb}/facets` | Metadata facets for this notebook |
+| `POST` | `/api/v2/notebooks/{nb}/search` | **Retrieval + gate decision, no LLM, no key** |
+| `GET` / `POST` | `/api/v2/jobs/{id}` / `.../cancel` | Job status / cancel |
+| `GET` `POST` | `/api/v2/notebooks/{nb}/chats` | Your chats in a notebook (private to you) |
+| `GET` `PATCH` `DELETE` | `/api/v2/chats/{id}` | Chat with messages / rename or re-scope / delete |
+| `POST` | `/api/v2/chats/{id}/messages` | Ask; answer has verified `[n]` citations |
+| `POST` | `/api/v2/chats/{id}/messages/stream` | Same, as Server-Sent Events |
+| `POST` | `/api/v2/messages/{id}/feedback` / `save-to-note` | Thumbs / keep an answer with its citations |
+| `GET` `POST` `PATCH` `DELETE` | `/api/v2/notebooks/{nb}/notes[/{id}]` | Notes; `POST /api/v2/notes/{id}/convert-to-source` |
+| `GET` `PUT` | `/api/v2/notebooks/{nb}/chat-config` | Goal, style (incl. learning guide), length, language |
+| `GET` | `/api/v2/notebooks/{nb}/overview` | Summary of all sources + suggested questions |
+| `POST` `GET` | `/api/v2/notebooks/{nb}/artifacts` | Studio: report, data table, mind map, flashcards, quiz (a job) / list |
+| `GET` `DELETE` | `/api/v2/artifacts/{id}` | Artifact with content, citations, your study progress, `stale` flag |
+| `GET` | `/api/v2/artifacts/{id}/download?format=` | md, docx, pdf, csv, citations_csv, json, svg |
+| `PATCH` / `POST` | `/api/v2/artifacts/{id}/progress` / `grade` | Flashcard marks / quiz grading (short answers by `MODEL_JUDGE`) |
+
+Answers cite passages as `[n]`. The server drops markers that point at no
+passage, scores how well each cited passage supports its sentence, and marks
+weak citations and unsupported sentences.
+
+Notebooks are isolated by construction: each has its own index, so IDF,
+coverage, facets and duplicate detection never see another notebook. On first
+boot, an existing `data/corpus.json` is imported into the Default notebook and
+the original files are kept in `data/legacy-backup-<timestamp>/`.
 
 `/api/search` exists so retrieval can be graded on its own terms, exposing the
 per-retriever ranks RRF fused and the decision the gate would reach:
@@ -209,17 +282,27 @@ All optional; every value has a working default.
 | Variable | Default | Meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Only needed to generate answers |
-| `MODEL` | `claude-opus-5` | Generation model |
-| `EMBEDDING_BACKEND` | `hashing` | or `sentence-transformers` |
+| `MODEL` | `claude-opus-5-5` | Generation model (per-task: `MODEL_CHAT`, `MODEL_REWRITE`, `MODEL_STUDIO`, `MODEL_JUDGE`) |
+| `LLM_PROVIDER` | `anthropic` | or `openai` for any OpenAI-compatible server (Ollama, vLLM); set `OPENAI_BASE_URL` |
+| `MAX_UPLOAD_MB` / `MAX_SOURCE_WORDS` | `200` / `500000` | Per-source limits |
+| `SOURCE_GUIDES` | `true` | Summary, topics and questions per source |
 | `EMBEDDING_DIMENSIONS` | `1024` | Hashing embedder width |
 | `RRF_K` | `60` | Fusion smoothing constant |
 | `LEXICAL_WEIGHT` | `1.0` | Set `0` to disable BM25 |
 | `DENSE_WEIGHT` | `1.0` | Set `0` to disable vectors |
-| `RELEVANCE_FLOOR` | `0.40` | Below this, refuse |
-| `DENSE_RESCUE_FLOOR` | `0.25` | `1.0` disables rescue |
+| `RELEVANCE_FLOOR` | `0.42` | Below this, refuse (or a measured row in `calibrations`) |
+| `EMBEDDING_BACKEND` | `auto` | sentence-transformers if installed, else hashing |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | e.g. `intfloat/multilingual-e5-small` for multilingual |
+| `QUERY_REWRITE` | `heuristic` | Follow-up condensation: `heuristic`, `llm` or `off` |
+| `MULTI_QUERY` / `RERANKER` | `false` / `off` | Context-only improvements; never change the gate |
+| `LONG_CONTEXT_TOKEN_BUDGET` | `0` | Pass all in-scope chunks when they fit (off by default: cost) |
+| `DENSE_RESCUE_FLOOR` | `0.36` | `1.0` disables rescue |
 | `TOP_K` | `6` | Passages per answer |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | Characters |
-| `DATA_DIR` | `./data` | Corpus location |
+| `DATA_DIR` | `./data` | SQLite database (`hsr.sqlite3`) and stored originals |
+| `JOB_WORKERS` | `2` | Background ingestion threads |
+| `MAX_SOURCES_PER_NOTEBOOK` | `50` | Per notebook (the v1 Default notebook is unlimited) |
+| `SINGLE_USER_MODE` | `true` | No login; everything belongs to the local user |
 
 Setting `LEXICAL_WEIGHT=0` or `DENSE_WEIGHT=0` isolates either retriever, which
 is how `measure_hybrid.py` attributes the contribution of each.
@@ -231,22 +314,36 @@ is how `measure_hybrid.py` attributes the contribution of each.
 ```
 app/
   config.py            Environment-driven settings
-  main.py              FastAPI routes
+  main.py              FastAPI routes (v1, on the Default notebook)
+  api_v2.py            /api/v2: notebooks, sources, search, jobs
+  migrations/          001_initial.sql, ...
   schemas.py           Request/response models
   core/
     embedding.py       Pluggable embedders (hashing | sentence-transformers)
     retrieval.py       HybridIndex: BM25 + dense + RRF
     metadata.py        ScopeFilter parsing and matching
     guard.py           The two-layer scope gate
-    store.py           Ingest, tag, persist, reload
+    db.py              SQLite connection + numbered-SQL migration runner
+    notebooks.py       NotebookStore (per-notebook index) + NotebookRegistry
+    jobs.py            Durable background jobs (thread pool + jobs table)
+    importer.py        One-time corpus.json -> Default notebook import
+    services.py        Wires db, notebooks, import and jobs together
+    store.py           Legacy JSON store (kept for import and its tests)
     chunking.py        Boundary-aware splitting
     extract.py         PDF / DOCX / CSV / JSON / MD / TXT
     persona.py         Who the bot is and what it covers
-web/                   Vanilla JS UI, no build step
+examples/
+  course_ta/ customer_care/   The two bundled demo corpora
+  public_domain/              Constitution, Faraday, Darwin (eval corpora)
+web/                   Vanilla JS, no build step
+  notebook/index.html  Notebook UI (/)
+  js/                  ES modules: api, markdown (escape-first renderers), app, studio
+  index.html, app.js   Classic single-corpus UI (/classic)
 scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
-tests/                 267 offline tests
+eval/                  Offline/live eval harness + labelled datasets
+tests/                 583 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing
@@ -254,7 +351,14 @@ tests/                 267 offline tests
 ```bash
 pytest                 # everything, offline, no key
 pytest -q --tb=short
+python -m eval.run --offline                  # metrics table, free
+python -m eval.run --offline --check-baseline # the CI regression gate
 ```
+
+`tests/test_invariants.py` pins the scope-gate guarantees (filter before score,
+zero-token refusals, monotonic floor, injection handling, ...) listed in
+`docs/roadmap/notebooklm-parity.md`. CI also fails if any offline eval metric
+regresses more than 2 points from `eval/baseline.json`.
 
 The LLM is stubbed throughout; CI sets no API key. Frontend markdown-escaping
 and scroll behaviour are tested through Node harnesses when `node` is
@@ -269,4 +373,5 @@ which did lexical-only retrieval over a flat corpus.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE). Derivative works
+must also be distributed under GPL-3.0 with source available.

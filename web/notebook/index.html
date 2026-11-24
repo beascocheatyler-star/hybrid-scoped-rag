@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Hybrid Scoped RAG notebooks: grounded, cited answers from your own sources." />
+  <title>Hybrid Scoped RAG — Notebooks</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Cpath d=%22M8 1l7 7-7 7-7-7z%22 fill=%22%232a56c6%22/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/css/notebook.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar" role="banner">
+    <a class="brand" href="#/" aria-label="Hybrid Scoped RAG, all notebooks">
+      <span class="brand-mark" aria-hidden="true">◆</span> Hybrid Scoped RAG
+    </a>
+    <nav class="topbar-nav" aria-label="Notebook">
+      <span id="nb-title" class="nb-title"></span>
+    </nav>
+    <a class="topbar-link" href="/classic" title="The original single-corpus UI">Classic UI</a>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <!-- Home: notebook grid -->
+    <section id="home" class="view" aria-labelledby="home-h" hidden>
+      <div class="home-head">
+        <h1 id="home-h">Notebooks</h1>
+        <button id="nb-create" class="btn primary" type="button">+ New notebook</button>
+      </div>
+      <ul id="nb-grid" class="nb-grid" aria-label="Your notebooks"></ul>
+    </section>
+
+    <!-- Notebook: three panels (tabs under 900px) -->
+    <section id="notebook" class="view" aria-label="Notebook" hidden>
+      <div class="tabs" role="tablist" aria-label="Notebook panels">
+        <button role="tab" id="tab-sources" aria-controls="panel-sources" aria-selected="false">Sources</button>
+        <button role="tab" id="tab-chat" aria-controls="panel-chat" aria-selected="true">Chat</button>
+        <button role="tab" id="tab-studio" aria-controls="panel-studio" aria-selected="false">Studio</button>
+      </div>
+      <div class="panels">
+        <section id="panel-sources" class="panel" role="tabpanel" aria-labelledby="tab-sources">
+          <div class="panel-head">
+            <h2>Sources</h2>
+            <button id="src-add" class="btn" type="button" aria-haspopup="dialog">+ Add</button>
+          </div>
+          <label class="select-all"><input type="checkbox" id="src-all" checked /> Select all sources</label>
+          <div id="facets" class="facets" role="group" aria-label="Filter by metadata"></div>
+          <ul id="src-list" class="src-list" aria-label="Sources in this notebook"></ul>
+        </section>
+
+        <section id="panel-chat" class="panel chat" role="tabpanel" aria-labelledby="tab-chat">
+          <div class="panel-head">
+            <h2>Chat</h2>
+            <div class="chat-tools">
+              <label class="sr-only" for="chat-select">Conversation</label>
+              <select id="chat-select" aria-label="Conversation"></select>
+              <button id="chat-new" class="btn" type="button">New chat</button>
+              <button id="chat-delete" class="btn ghost" type="button" aria-label="Delete this chat">Delete</button>
+            </div>
+          </div>
+          <div id="overview" class="overview" aria-live="polite"></div>
+          <div id="messages" class="messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+          <form id="composer" class="composer" autocomplete="off">
+            <label class="sr-only" for="input">Ask about your sources</label>
+            <textarea id="input" rows="1" placeholder="Ask about your sources…" required></textarea>
+            <button id="send" class="btn primary" type="submit">Send</button>
+            <button id="stop" class="btn" type="button" hidden>Stop</button>
+          </form>
+          <p id="scope-line" class="scope-line" aria-live="polite"></p>
+        </section>
+
+        <section id="panel-studio" class="panel" role="tabpanel" aria-labelledby="tab-studio">
+          <div class="panel-head"><h2>Studio</h2></div>
+          <div id="studio-cards" class="studio-cards" aria-label="Generate"></div>
+          <h3 class="sub">Outputs</h3>
+          <ul id="artifacts" class="artifacts" aria-label="Generated outputs"></ul>
+          <h3 class="sub">Jobs</h3>
+          <ul id="jobs" class="jobs" aria-label="Background jobs"></ul>
+          <div class="panel-head"><h3 class="sub">Notes</h3>
+            <button id="note-new" class="btn" type="button">+ Note</button></div>
+          <ul id="notes" class="notes" aria-label="Notes"></ul>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <!-- Source viewer drawer -->
+  <aside id="viewer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="viewer-title" hidden>
+    <div class="drawer-head">
+      <h2 id="viewer-title">Source</h2>
+      <button id="viewer-close" class="btn ghost" type="button" aria-label="Close source viewer">✕</button>
+    </div>
+    <div id="viewer-meta" class="viewer-meta"></div>
+    <details id="viewer-guide" class="viewer-guide"><summary>Source guide</summary><div></div></details>
+    <pre id="viewer-text" class="viewer-text" tabindex="0"></pre>
+  </aside>
+
+  <!-- Add sources dialog -->
+  <dialog id="add-dialog" aria-labelledby="add-title">
+    <form method="dialog" id="add-form">
+      <h2 id="add-title">Add sources</h2>
+      <div class="add-tabs" role="tablist" aria-label="Source type">
+        <button type="button" role="tab" data-kind="file" aria-selected="true">Files</button>
+        <button type="button" role="tab" data-kind="url" aria-selected="false">Website</button>
+        <button type="button" role="tab" data-kind="youtube" aria-selected="false">YouTube</button>
+        <button type="button" role="tab" data-kind="text" aria-selected="false">Paste text</button>
+      </div>
+      <div data-pane="file">
+        <label for="add-files">Files (PDF, DOCX, PPTX, EPUB, TXT, MD, HTML, CSV, JSON, images, audio)</label>
+        <input id="add-files" type="file" multiple />
+      </div>
+      <div data-pane="url" hidden><label for="add-url">Web page URL</label>
+        <input id="add-url" type="url" placeholder="https://…" /></div>
+      <div data-pane="youtube" hidden><label for="add-yt">YouTube URL</label>
+        <input id="add-yt" type="url" placeholder="https://www.youtube.com/watch?v=…" /></div>
+      <div data-pane="text" hidden>
+        <label for="add-text-title">Title</label><input id="add-text-title" type="text" />
+        <label for="add-text">Text</label><textarea id="add-text" rows="6"></textarea>
+      </div>
+      <label for="add-tags">Tags (optional, e.g. course=CS1428, term=fall2025)</label>
+      <input id="add-tags" type="text" />
+      <p id="add-status" class="status" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" id="add-cancel" class="btn ghost">Cancel</button>
+        <button type="button" id="add-submit" class="btn primary">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Studio: customise + viewer -->
+  <dialog id="studio-dialog" aria-labelledby="studio-title">
+    <form method="dialog" id="studio-form">
+      <h2 id="studio-title">Generate</h2>
+      <div id="studio-fields"></div>
+      <p id="studio-status" class="status" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" id="studio-cancel" class="btn ghost">Cancel</button>
+        <button type="button" id="studio-go" class="btn primary">Generate</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="artifact-dialog" class="artifact-dialog" aria-labelledby="artifact-title">
+    <div class="drawer-head">
+      <h2 id="artifact-title">Output</h2>
+      <div class="artifact-tools" id="artifact-tools"></div>
+      <button type="button" id="artifact-close" class="btn ghost" aria-label="Close">✕</button>
+    </div>
+    <div id="artifact-body" class="artifact-body"></div>
+  </dialog>
+  <div id="cite-card" class="cite-card" role="tooltip" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

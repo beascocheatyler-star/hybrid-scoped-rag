@@ -71,6 +71,17 @@ class ChatResponse(BaseModel):
     reason: str
     usage: Optional[Dict[str, int]] = None
     model: Optional[str] = None
+    # M4: "markers" when citations come from [n] markers in the answer
+    # (verified_citations holds them with quotes and support scores);
+    # "retrieved" when the model wrote none and citations are the passages it
+    # was shown (v1 compatibility); "none" for refusals.
+    citation_mode: str = "none"
+    verified_citations: List[Dict[str, Any]] = Field(default_factory=list)
+    sentences: List[Dict[str, Any]] = Field(default_factory=list)
+    hallucinated_citations: List[int] = Field(default_factory=list)
+    retrieval: List[Dict[str, Any]] = Field(default_factory=list)
+    retrieval_query: str = ""
+    rewrite: str = "none"
 
 
 class SearchRequest(BaseModel):

@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
+# Tests are calibrated against the deterministic hashing embedder. With
+# EMBEDDING_BACKEND=auto (the default) an installed sentence-transformers
+# would otherwise change every score.
+os.environ.setdefault("EMBEDDING_BACKEND", "hashing")
+
 from pathlib import Path
 
 import pytest

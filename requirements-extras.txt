@@ -1,0 +1,15 @@
+# Optional features. The core install (requirements.txt) boots and passes the
+# test suite without any of these; each is imported lazily and a missing one
+# produces a clear per-source / per-feature error.
+
+numpy>=1.24                 # vectorised cosine (M3)
+sentence-transformers>=2.6  # semantic embeddings (EMBEDDING_BACKEND=sentence-transformers)
+trafilatura>=1.8            # better main-text extraction for URL sources
+youtube-transcript-api>=0.6 # YouTube sources
+faster-whisper>=1.0         # local audio transcription
+pytesseract>=0.3            # image OCR (needs the Tesseract binary)
+Pillow>=10.0                # image OCR
+pdf2image>=1.17             # OCR fallback for scanned PDFs (needs Poppler)
+
+# Development only: browser smoke test (tests/test_e2e_playwright.py); uses system Chrome.
+# playwright>=1.45

@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.config import Settings
+from app.core.chats import LENGTHS, STYLES, ChatConfig, ChatRepo, preset_config
+from app.core.engine import ChatEngine
 from app.core.extract import SUPPORTED_EXTENSIONS
 from app.core.fetch import FetchError
 from app.core.guard import classify
@@ -142,6 +144,47 @@ class MeOut(BaseModel):
     single_user_mode: bool
 
 
+class ChatIn(BaseModel):
+    title: str = Field(default="New chat", max_length=200)
+    source_ids: Optional[List[str]] = None
+    scope: Optional[Dict[str, Any]] = None
+
+
+class ChatPatch(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    source_ids: Optional[List[str]] = None
+    scope: Optional[Dict[str, Any]] = None
+
+
+class MessageIn(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    source_ids: Optional[List[str]] = None
+    scope: Optional[Dict[str, Any]] = None
+
+
+class FeedbackIn(BaseModel):
+    feedback: str = Field(description="'up', 'down' or '' to clear")
+
+
+class NoteIn(BaseModel):
+    title: str = Field(default="Untitled note", max_length=200)
+    body_md: str = Field(default="", max_length=200_000)
+
+
+class NotePatch(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    body_md: Optional[str] = Field(default=None, max_length=200_000)
+
+
+class ChatConfigIn(BaseModel):
+    goal: str = Field(default="", max_length=2000)
+    style: str = Field(default="default", description="default | learning_guide | custom")
+    custom_style: str = Field(default="", max_length=2000)
+    length: str = Field(default="default", description="short | default | long")
+    language: str = Field(default="", max_length=40)
+    name: str = Field(default="Notebook assistant", max_length=80)
+
+
 # --------------------------------------------------------------------------
 # Router
 # --------------------------------------------------------------------------
@@ -152,6 +195,7 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
     registry = services.registry
     jobs = services.jobs
     db = services.db
+    chats = ChatRepo(db)
 
     def current_user() -> str:
         # M8 replaces this with session auth when SINGLE_USER_MODE=false.
@@ -397,6 +441,8 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
         store = notebook_store(nb_id)
         if not store.delete(source_id):
             raise HTTPException(status_code=404, detail="Source not found.")
+        if settings.source_guides:
+            jobs.enqueue("overview", {}, notebook_id=nb_id)
         return Response(status_code=204)
 
     @r.get("/notebooks/{nb_id}/facets")
@@ -456,5 +502,228 @@ def create_v2_router(services: Services, settings: Settings) -> APIRouter:
         d = jobs.cancel(job_id).to_dict()  # type: ignore[union-attr]
         d.pop("payload", None)
         return JobOut(**d)
+
+    # --- chat configuration (per notebook) ---------------------------------
+
+    def chat_config(nb_id: str) -> ChatConfig:
+        return ChatConfig.from_dict(registry.get(nb_id).chat_config)
+
+    def persona_for(nb_id: str):
+        nb = registry.get(nb_id)
+        return ChatConfig.from_dict(nb.chat_config).to_persona(nb.title, nb.description)
+
+    @r.get("/notebooks/{nb_id}/chat-config")
+    def get_chat_config(nb_id: str) -> Dict[str, Any]:
+        notebook_store(nb_id)
+        return chat_config(nb_id).to_dict()
+
+    @r.put("/notebooks/{nb_id}/chat-config")
+    def put_chat_config(nb_id: str, body: ChatConfigIn) -> Dict[str, Any]:
+        notebook_store(nb_id)
+        if body.style not in STYLES or body.length not in LENGTHS:
+            raise HTTPException(status_code=400, detail="style must be one of {}; length one of {}".format(
+                STYLES, LENGTHS))
+        registry.update(nb_id, chat_config=body.model_dump())
+        return chat_config(nb_id).to_dict()
+
+    @r.post("/notebooks/{nb_id}/chat-config/preset/{preset}")
+    def apply_chat_preset(nb_id: str, preset: str) -> Dict[str, Any]:
+        notebook_store(nb_id)
+        try:
+            cfg = preset_config(preset)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown preset.")
+        registry.update(nb_id, chat_config=cfg.to_dict())
+        return cfg.to_dict()
+
+    # --- overview ----------------------------------------------------------
+
+    @r.get("/notebooks/{nb_id}/overview")
+    def get_overview(nb_id: str) -> Dict[str, Any]:
+        store = notebook_store(nb_id)
+        row = db.one("SELECT overview_json FROM notebooks WHERE id = ?", (nb_id,))
+        ov = json.loads(row["overview_json"] or "{}") if row else {}
+        ready = sorted(d.doc_id for d in store.list_documents())
+        ov["stale"] = bool(ov) and sorted(ov.get("source_ids", [])) != ready
+        return ov
+
+    @r.post("/notebooks/{nb_id}/overview/refresh", response_model=JobOut, status_code=202)
+    def refresh_overview(nb_id: str) -> JobOut:
+        notebook_store(nb_id)
+        d = jobs.enqueue("overview", {}, notebook_id=nb_id).to_dict()
+        d.pop("payload", None)
+        return JobOut(**d)
+
+    # --- chats ---------------------------------------------------------------
+
+    def own_chat(chat_id: str):
+        chat = chats.get_chat(chat_id, current_user())
+        if chat is None or not can_access(chat.notebook_id, current_user()):
+            raise HTTPException(status_code=404, detail="Chat not found.")
+        return chat
+
+    @r.post("/notebooks/{nb_id}/chats", status_code=201)
+    def create_chat(nb_id: str, body: Optional[ChatIn] = None) -> Dict[str, Any]:
+        notebook_store(nb_id)
+        body = body or ChatIn()
+        parse_scope(body.scope, body.source_ids)  # validate early
+        return chats.create_chat(nb_id, current_user(), body.title, body.source_ids, body.scope).to_dict()
+
+    @r.get("/notebooks/{nb_id}/chats")
+    def list_chats(nb_id: str) -> List[Dict[str, Any]]:
+        notebook_store(nb_id)
+        return [c.to_dict() for c in chats.list_chats(nb_id, current_user())]
+
+    @r.get("/chats/{chat_id}")
+    def get_chat(chat_id: str) -> Dict[str, Any]:
+        chat = own_chat(chat_id)
+        out = chat.to_dict()
+        out["messages"] = [m.to_dict() for m in chats.messages(chat_id)]
+        return out
+
+    @r.patch("/chats/{chat_id}")
+    def patch_chat(chat_id: str, body: ChatPatch) -> Dict[str, Any]:
+        own_chat(chat_id)
+        fields = body.model_dump(exclude_unset=True)
+        chat = chats.update_chat(chat_id, current_user(), title=fields.get("title"),
+                                 source_ids=fields.get("source_ids", ...), scope=fields.get("scope", ...))
+        return chat.to_dict()  # type: ignore[union-attr]
+
+    @r.delete("/chats/{chat_id}", status_code=204)
+    def delete_chat(chat_id: str) -> Response:
+        own_chat(chat_id)
+        chats.delete_chat(chat_id, current_user())
+        return Response(status_code=204)
+
+    def _prepare_turn(chat, body: MessageIn):
+        store = notebook_store(chat.notebook_id)
+        source_ids = body.source_ids if body.source_ids is not None else chat.source_ids
+        raw_scope = body.scope if body.scope is not None else chat.scope
+        scope = parse_scope(raw_scope, source_ids)
+        if body.source_ids is not None or body.scope is not None:
+            chats.update_chat(chat.id, current_user(), source_ids=source_ids, scope=raw_scope)
+        history = chats.history(chat.id)
+        user_msg = chats.add_message(chat.id, "user", body.content)
+        if not history and chat.title == "New chat":
+            chats.update_chat(chat.id, current_user(), title=body.content[:60])
+        engine = ChatEngine(settings, store)
+        return engine, scope, history, user_msg
+
+    def _save_answer(chat_id: str, ans) -> Dict[str, Any]:
+        msg = chats.add_message(
+            chat_id, "assistant", ans.text, decision=ans.decision, reason=ans.reason,
+            retrieval={"passages": ans.retrieval, "query": ans.retrieval_query,
+                       "rewrite": ans.rewrite, "relevance": round(ans.best_score, 4),
+                       "dense_score": round(ans.dense_score, 4),
+                       "rescued_by_dense": ans.rescued_by_dense,
+                       "documents_in_scope": ans.documents_in_scope,
+                       "sentences": ans.sentences, "citation_mode": ans.citation_mode},
+            citations=ans.verified_citations, usage=ans.usage, model=ans.model or "")
+        return msg.to_dict()
+
+    @r.post("/chats/{chat_id}/messages")
+    def post_message(chat_id: str, body: MessageIn) -> Dict[str, Any]:
+        chat = own_chat(chat_id)
+        engine, scope, history, user_msg = _prepare_turn(chat, body)
+        ans = engine.answer(body.content, persona_for(chat.notebook_id), history=history, scope=scope)
+        return {"user_message": user_msg.to_dict(), "message": _save_answer(chat_id, ans)}
+
+    @r.post("/chats/{chat_id}/messages/stream")
+    def stream_message(chat_id: str, body: MessageIn):
+        """Server-Sent Events: decision, rewrite, retrieval, token*, citations,
+        done | error. A refused question is decision + done, no LLM call."""
+        chat = own_chat(chat_id)
+        engine, scope, history, user_msg = _prepare_turn(chat, body)
+        persona = persona_for(chat.notebook_id)
+
+        def sse(event: str, data: Dict[str, Any]) -> bytes:
+            return "event: {}\ndata: {}\n\n".format(event, json.dumps(data, ensure_ascii=False)).encode()
+
+        def gen():
+            yield sse("user_message", user_msg.to_dict())
+            try:
+                for event, data in engine.answer_stream(body.content, persona, history=history, scope=scope):
+                    if event == "done":
+                        yield sse("done", {"message": _save_answer(chat_id, data["answer_obj"])})
+                    else:
+                        yield sse(event, data)
+            except Exception as exc:  # never leave the client hanging
+                yield sse("error", {"detail": str(exc)})
+
+        return StreamingResponse(gen(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @r.post("/messages/{message_id}/feedback")
+    def message_feedback(message_id: str, body: FeedbackIn) -> Dict[str, Any]:
+        if body.feedback not in ("up", "down", ""):
+            raise HTTPException(status_code=400, detail="feedback must be 'up', 'down' or ''.")
+        m = chats.set_feedback(message_id, current_user(), body.feedback)
+        if m is None:
+            raise HTTPException(status_code=404, detail="Message not found.")
+        return m.to_dict()
+
+    @r.post("/messages/{message_id}/save-to-note", status_code=201)
+    def save_to_note(message_id: str) -> Dict[str, Any]:
+        m = chats.get_message(message_id, current_user())
+        nb_id = chats.message_notebook(message_id)
+        if m is None or nb_id is None or not can_access(nb_id, current_user()):
+            raise HTTPException(status_code=404, detail="Message not found.")
+        if m.role != "assistant":
+            raise HTTPException(status_code=400, detail="Only assistant answers can be saved as notes.")
+        title = " ".join(m.content.split())[:60] or "Saved answer"
+        return chats.create_note(nb_id, current_user(), title, m.content, m.citations, m.id).to_dict()
+
+    # --- notes ---------------------------------------------------------------
+
+    @r.get("/notebooks/{nb_id}/notes")
+    def list_notes(nb_id: str) -> List[Dict[str, Any]]:
+        notebook_store(nb_id)
+        return [n.to_dict() for n in chats.list_notes(nb_id)]
+
+    @r.post("/notebooks/{nb_id}/notes", status_code=201)
+    def create_note(nb_id: str, body: NoteIn) -> Dict[str, Any]:
+        notebook_store(nb_id)
+        return chats.create_note(nb_id, current_user(), body.title, body.body_md).to_dict()
+
+    def note_or_404(nb_id: str, note_id: str):
+        notebook_store(nb_id)
+        n = chats.get_note(note_id, nb_id)
+        if n is None:
+            raise HTTPException(status_code=404, detail="Note not found.")
+        return n
+
+    @r.get("/notebooks/{nb_id}/notes/{note_id}")
+    def get_note(nb_id: str, note_id: str) -> Dict[str, Any]:
+        return note_or_404(nb_id, note_id).to_dict()
+
+    @r.patch("/notebooks/{nb_id}/notes/{note_id}")
+    def patch_note(nb_id: str, note_id: str, body: NotePatch) -> Dict[str, Any]:
+        note_or_404(nb_id, note_id)
+        return chats.update_note(note_id, nb_id, body.title, body.body_md).to_dict()  # type: ignore[union-attr]
+
+    @r.delete("/notebooks/{nb_id}/notes/{note_id}", status_code=204)
+    def delete_note(nb_id: str, note_id: str) -> Response:
+        note_or_404(nb_id, note_id)
+        chats.delete_note(note_id, nb_id)
+        return Response(status_code=204)
+
+    @r.post("/notes/{note_id}/convert-to-source", response_model=AddSourcesOut, status_code=202)
+    def convert_note(note_id: str, wait: bool = Query(False)) -> AddSourcesOut:
+        nb_id = chats.note_notebook(note_id)
+        if nb_id is None:
+            raise HTTPException(status_code=404, detail="Note not found.")
+        store = notebook_store(nb_id)
+        note = chats.get_note(note_id, nb_id)
+        body_text = "# {}\n\n{}".format(note.title, note.body_md)  # type: ignore[union-attr]
+        try:
+            src = store.create_source(note.title[:80] + ".md", body_text.encode("utf-8"),  # type: ignore[union-attr]
+                                      kind="note", title=note.title, mime="text/markdown")  # type: ignore[union-attr]
+        except (DuplicateDocumentError, SourceLimitError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        chats.mark_note_source(note_id)
+        job = jobs.enqueue("ingest", {"source_id": src.id}, notebook_id=nb_id)
+        if wait:
+            jobs.wait(job.id, timeout=300)
+        return AddSourcesOut(queued=[QueuedSource(job_id=job.id, source_id=src.id, name=src.title)], skipped=[])
 
     return r

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Dict, Optional
 
@@ -10,6 +11,7 @@ from app.core.db import Database
 from app.core.embedding import Embedder
 from app.core.guide import AUTO_LABEL_MIN, build_guide, compute_labels
 from app.core.importer import import_legacy
+from app.core.overview import build_overview
 from app.core.llm import get_llm
 from app.core.jobs import Job, JobContext, JobQueue
 from app.core.notebooks import NotebookRegistry
@@ -97,7 +99,23 @@ def build_services(settings: Settings, embedder: Embedder, recover_jobs: bool = 
         ready = [s for s in store.list_sources() if s.status == "ready" and s.guide.get("summary")]
         if len(ready) >= AUTO_LABEL_MIN:
             jobs.enqueue("autolabel", {}, notebook_id=job.notebook_id)
+        queue_overview(job.notebook_id)
         return {"source_id": sid, "generated_by": g["generated_by"]}
+
+    def queue_overview(nb_id) -> None:
+        """Debounced: at most one queued overview job per notebook."""
+        if db.one("SELECT 1 FROM jobs WHERE notebook_id = ? AND type = 'overview' "
+                  "AND status = 'queued'", (nb_id,)) is None:
+            jobs.enqueue("overview", {}, notebook_id=nb_id)
+
+    def overview(job: Job, ctx: JobContext) -> Dict:
+        store = registry.store(job.notebook_id)  # type: ignore[arg-type]
+        srcs = [{"id": s.id, "title": s.title, "guide": s.guide}
+                for s in store.list_sources() if s.status == "ready"]
+        ov = build_overview(srcs, get_llm(settings, "studio"))
+        db.execute("UPDATE notebooks SET overview_json = ?, updated_at = updated_at WHERE id = ?",
+                   (json.dumps(ov, ensure_ascii=False), job.notebook_id))
+        return {"sources": len(srcs), "generated_by": ov["generated_by"]}
 
     def autolabel(job: Job, ctx: JobContext) -> Dict:
         store = registry.store(job.notebook_id)  # type: ignore[arg-type]
@@ -113,6 +131,7 @@ def build_services(settings: Settings, embedder: Embedder, recover_jobs: bool = 
     jobs.register("ingest", ingest)
     jobs.register("guide", guide)
     jobs.register("autolabel", autolabel)
+    jobs.register("overview", overview)
     if recover_jobs:
         jobs.recover()
     return Services(settings, db, registry, jobs, embedder, summary)

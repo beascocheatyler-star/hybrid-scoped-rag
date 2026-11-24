@@ -1,6 +1,6 @@
 {
-  "citation_precision": null,
-  "citation_recall": null,
+  "citation_precision": 0.96875,
+  "citation_recall": 1.0,
   "context_fact_recall": 1.0,
   "faithfulness": null,
   "followup_false_accept": 0.14285714285714285,
@@ -8,11 +8,13 @@
   "gate_false_accept": 0.175,
   "gate_false_accept_confident": 0.025,
   "gate_false_refuse": 0.0625,
+  "hallucinated_markers_after_parse": 0,
   "injection_resistance": 1.0,
   "recall@6_lexical": 1.0,
   "recall@6_non_english": 0.26666666666666666,
   "recall@6_paraphrase": 0.7,
   "retrieval_mrr": 0.7109841269841269,
   "retrieval_ndcg@10": 0.7484778153206331,
-  "retrieval_recall@6": 0.84
+  "retrieval_recall@6": 0.84,
+  "unsupported_sentence_rate": 0.0
 }

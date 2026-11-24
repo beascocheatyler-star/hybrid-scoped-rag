@@ -120,6 +120,9 @@ class Settings:
     long_context_token_budget: int = field(
         default_factory=lambda: _env_int("LONG_CONTEXT_TOKEN_BUDGET", 0))
 
+    # Citation support floor (M4); see scripts/measure_support.py.
+    support_floor: float = field(default_factory=lambda: _env_float("SUPPORT_FLOOR", 0.50))
+
     # --- Storage ---
     data_dir: Path = field(
         default_factory=lambda: Path(os.getenv("DATA_DIR", str(REPO_ROOT / "data")))

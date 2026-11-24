@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — M4: verifiable citations, persistent chat, streaming
+
+### Added
+- `[n]` passage citations (C1–C6): parser with hallucinated-marker removal,
+  per-sentence support scoring (`SUPPORT_FLOOR=0.50`, calibrated by
+  `scripts/measure_support.py`), weak and unsupported flags, quote excerpts,
+  anchors (page, slide, timestamp, offsets, section).
+- Persistent chats, messages and notes (migration 003); chats are private to
+  their creator. Feedback, save-to-note (citations preserved), notes CRUD and
+  convert-to-source.
+- SSE streaming (`decision`, `rewrite`, `retrieval`, `token`, `citations`,
+  `done`, `error`); refusals stream as `decision` + `done` with no LLM call.
+- Per-notebook chat configuration (goal, style incl. `learning_guide`, length,
+  language); the v1 presets become templates.
+- Notebook overview job (summary plus suggested questions, `stale` flag).
+- Eval: `citation_precision`, `citation_recall` and
+  `unsupported_sentence_rate` (offline via a deterministic answerer).
+
+### Changed
+- Generation goes through the `LLMClient` abstraction.
+- `/api/chat` (v1) returns cited passages when the answer has markers, else
+  the passages shown (`citation_mode: "retrieved"`), plus the new citation
+  fields. No legacy test changed.
+
+
 ## Unreleased — M3: retrieval quality
 
 ### Fixed

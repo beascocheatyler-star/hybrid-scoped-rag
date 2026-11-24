@@ -19,7 +19,7 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 python scripts/demo_hybrid.py     # guided tour, no key required
-pytest                            # 517 tests, all offline
+pytest                            # 556 tests, all offline
 python run.py                     # web UI at http://localhost:8000
 ```
 
@@ -188,6 +188,12 @@ raising the floor must never make the bot answer *more* questions.
 - **The URL fetcher resolves DNS twice** (once to check, once to connect), so
   a DNS-rebinding attacker could race it. Private, loopback and link-local
   targets, and redirects to them, are otherwise refused.
+- **Citation checks are lexical plus embedding similarity, not entailment.**
+  A cited passage that shares words with a wrong claim can pass. The optional
+  LLM judge (`CITATION_JUDGE`) is not built yet. The offline citation metrics
+  use a deterministic answerer; a real model needs `eval.run --live`.
+- **Chat privacy is enforced in the repository; login arrives in M8.** In the
+  default single-user mode everything belongs to the local user.
 - **Imported legacy sources have no original file.** The pre-M1 JSON store
   never kept uploads, so documents migrated from `corpus.json` can be
   searched and cited, but `GET .../file` returns 404 for them.
@@ -232,6 +238,18 @@ unchanged for existing clients. The v2 API (M1) addresses any notebook:
 | `GET` | `/api/v2/notebooks/{nb}/facets` | Metadata facets for this notebook |
 | `POST` | `/api/v2/notebooks/{nb}/search` | **Retrieval + gate decision, no LLM, no key** |
 | `GET` / `POST` | `/api/v2/jobs/{id}` / `.../cancel` | Job status / cancel |
+| `GET` `POST` | `/api/v2/notebooks/{nb}/chats` | Your chats in a notebook (private to you) |
+| `GET` `PATCH` `DELETE` | `/api/v2/chats/{id}` | Chat with messages / rename or re-scope / delete |
+| `POST` | `/api/v2/chats/{id}/messages` | Ask; answer has verified `[n]` citations |
+| `POST` | `/api/v2/chats/{id}/messages/stream` | Same, as Server-Sent Events |
+| `POST` | `/api/v2/messages/{id}/feedback` / `save-to-note` | Thumbs / keep an answer with its citations |
+| `GET` `POST` `PATCH` `DELETE` | `/api/v2/notebooks/{nb}/notes[/{id}]` | Notes; `POST /api/v2/notes/{id}/convert-to-source` |
+| `GET` `PUT` | `/api/v2/notebooks/{nb}/chat-config` | Goal, style (incl. learning guide), length, language |
+| `GET` | `/api/v2/notebooks/{nb}/overview` | Summary of all sources + suggested questions |
+
+Answers cite passages as `[n]`. The server drops markers that point at no
+passage, scores how well each cited passage supports its sentence, and marks
+weak citations and unsupported sentences.
 
 Notebooks are isolated by construction: each has its own index, so IDF,
 coverage, facets and duplicate detection never see another notebook. On first
@@ -315,7 +333,7 @@ scripts/
   demo_hybrid.py       Guided tour
   measure_hybrid.py    Reproduce every tuning number
 eval/                  Offline/live eval harness + labelled datasets
-tests/                 517 offline tests (test_invariants.py pins I1–I9)
+tests/                 556 offline tests (test_invariants.py pins I1–I9)
 ```
 
 ## Testing

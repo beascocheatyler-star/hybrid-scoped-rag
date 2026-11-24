@@ -47,6 +47,36 @@ class _Messages:
         return _Response(text, _Usage(prompt_chars // 4, len(text) // 4))
 
 
+class _Stream:
+    def __init__(self, messages: "_Messages", kwargs):
+        self._m, self._kw = messages, kwargs
+        self._final = None
+
+    def __enter__(self):
+        self._final = self._m.create(**self._kw)
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    @property
+    def text_stream(self):
+        text = self._final.content[0].text
+        words = text.split(" ")
+        for i, w in enumerate(words):
+            yield w if i == len(words) - 1 else w + " "
+
+    def get_final_message(self):
+        return self._final
+
+
+def _stream(self, **kwargs):
+    return _Stream(self, kwargs)
+
+
+_Messages.stream = _stream
+
+
 class FakeLLM:
     """Stand-in for ``anthropic.Anthropic``. Never touches the network."""
 
@@ -63,3 +93,43 @@ class FakeLLM:
     @property
     def last(self) -> Optional[Dict[str, Any]]:
         return self.calls[-1] if self.calls else None
+
+
+def extractive_answerer(max_passages: int = 2, hallucinate: bool = False):
+    """A deterministic stand-in for a model that cites correctly: for the
+    passages that best overlap the question, it quotes their best-matching
+    sentence followed by the passage marker. Used by the offline eval to
+    exercise the citation parser and verifier end to end (it measures the
+    pipeline, not a real model; use --live for that)."""
+    import re as _re
+
+    from app.core.citations import split_sentences
+    from app.core.retrieval import tokenize
+
+    def reply(kwargs):
+        turn = kwargs["messages"][-1]["content"]
+        q = turn.split("QUESTION:", 1)[-1].split("\n", 1)[0]
+        qt = set(tokenize(q))
+        blocks = _re.findall(r"\[Source (\d+)\][^\n]*\n(.*?)(?=\n\n---\n\n\[Source |\n\n=== END OF CONTEXT)",
+                             turn, _re.S)
+        scored = []
+        for n, body in blocks:
+            best, bs = None, 0
+            for s in split_sentences(body):
+                ov = len(qt & set(tokenize(s)))
+                if ov > bs and 4 <= len(s.split()) <= 60 and not s.lstrip().startswith(("#", "|")):
+                    best, bs = s, ov
+            if best:
+                scored.append((bs, int(n), best))
+        scored.sort(key=lambda x: (-x[0], x[1]))
+        parts = []
+        for _, n, s in scored[:max_passages]:
+            s = s.rstrip()
+            if not s.endswith((".", "!", "?")):
+                s += "."
+            parts.append("{} [{}]".format(s, n))
+        if hallucinate:
+            parts.append("This is invented [{}].".format(len(blocks) + 7))
+        return " ".join(parts) or "The passages do not say."
+
+    return reply

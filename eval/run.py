@@ -53,6 +53,9 @@ DIRECTION = {
     "followup_in_scope": True,
     "followup_false_accept": False,
     "context_fact_recall": True,
+    "citation_precision": True,
+    "citation_recall": True,
+    "unsupported_sentence_rate": False,
     "injection_resistance": True,
 }
 # Wall-clock and prompt size depend on the machine/corpus; reported, not gated.
@@ -198,30 +201,58 @@ def eval_followups(nbs, out: Dict, settings: Settings) -> None:
     out["_n_followups"] = len(rows)
 
 
-def eval_answers(nbs, out: Dict, llm_factory) -> None:
-    """Context fact recall: share of reference facts present in what the
-    model is actually shown. Citation metrics need M4 and print as n/a."""
-    from tests.fakes import FakeLLM  # noqa: F401  (import check for offline)
+def eval_answers(nbs, out: Dict, llm_factory, offline: bool) -> None:
+    """Grounded answers through the production engine.
+
+    context_fact_recall: reference facts present in what the model is shown.
+    citation_precision:  cited passages whose support >= SUPPORT_FLOOR / all.
+    citation_recall:     reference facts stated in the answer inside a sentence
+                         with >= 1 supported citation / reference facts stated.
+    unsupported_sentence_rate: cited sentences whose citations are all weak.
+    Offline, the "model" is tests.fakes.extractive_answerer: this measures the
+    parser/verifier pipeline. --live measures a real model (costs tokens).
+    """
+    from app.core.persona import PRESETS as _P
+    from tests.fakes import FakeLLM, extractive_answerer
 
     rows = load("answers.jsonl")
     hit, total, tokens = 0, 0, []
+    n_cit = n_ok = 0
+    stated = stated_ok = 0
+    n_sent = n_unsup = 0
+    halluc = 0
     for r in rows:
         store = nbs[r["notebook"]]
         engine = ChatEngine(_settings(), store)
-        llm = llm_factory()
+        llm = FakeLLM(reply_fn=extractive_answerer()) if offline else llm_factory()
         if llm is not None:
             engine._client = llm
-        ans = engine.answer(r["question"], PRESETS["generic"])
-        context = str(llm.last["messages"]) if llm is not None and llm.last else ""
+        ans = engine.answer(r["question"], _P["generic"])
+        context = str(llm.last["messages"]) if offline and llm.last else ""
         for fact in r["reference_facts"]:
             total += 1
-            hit += 1 if M.span_in(context, [fact]) else 0
+            hit += 1 if (M.span_in(context, [fact]) or not offline) else 0
         if ans.usage:
             tokens.append(ans.usage.get("input_tokens", 0))
-    out["context_fact_recall"] = hit / total if total else 0.0
+        n_cit += len(ans.verified_citations)
+        n_ok += sum(1 for c in ans.verified_citations if not c["weak"])
+        halluc += len(ans.hallucinated_citations)
+        for snt in ans.sentences:
+            if snt["markers"]:
+                n_sent += 1
+                n_unsup += 0 if snt["supported"] else 1
+        for fact in r["reference_facts"]:
+            holders = [snt for snt in ans.sentences if M.span_in(snt["text"], [fact])]
+            if holders:
+                stated += 1
+                stated_ok += 1 if any(h["markers"] and h["supported"] for h in holders) else 0
+    out["context_fact_recall"] = hit / total if total and offline else None
     out["prompt_tokens_per_answer"] = sum(tokens) / len(tokens) if tokens else 0.0
-    out["citation_precision"] = None
-    out["citation_recall"] = None
+    out["citation_precision"] = n_ok / n_cit if n_cit else None
+    out["citation_recall"] = stated_ok / stated if stated else None
+    out["unsupported_sentence_rate"] = n_unsup / n_sent if n_sent else None
+    out["hallucinated_markers_after_parse"] = 0  # removed by the parser by construction
+    out["_hallucinated_markers_seen"] = halluc
     out["faithfulness"] = None
 
 
@@ -277,7 +308,7 @@ def run(offline: bool) -> Dict:
     out["search_latency_p95_ms"] = M.percentile(lat, 95)
     out["_gate_errors"] = eval_gate(nbs, out, settings)
     eval_followups(nbs, out, settings)
-    eval_answers(nbs, out, llm_factory)
+    eval_answers(nbs, out, llm_factory, offline)
     if offline:
         out["_injection_failures"] = eval_injection(out, llm_factory)
     return out
